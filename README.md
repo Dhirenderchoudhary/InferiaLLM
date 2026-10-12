@@ -449,6 +449,7 @@ InferiaLLM is configured via a `.env` file (start from [`.env.example`](./.env.e
 | `INFERIA_WORKER_IMAGE_TAG` | Worker image tag deployed to provisioned nodes | `0.2.7` |
 | `INFERIA_MODEL_CACHE_DIR` | Host path for the model cache / mirror | `/var/lib/inferia/models` |
 | `INFERIA_MODEL_MIRROR_BASE` | Public base URL of this control plane (for the `/v2` + `/hf` mirror) | — |
+| `INFERIA_MODEL_EGRESS` | `false` declares an air-gapped install: the cache is filled by `inferiallm models import` only, and a miss fails instead of reaching origin. Requires `INFERIA_MODEL_MIRROR_BASE`. | `true` |
 | `INFERIA_SSH_AUTHORIZED_KEYS_FILE` | Public keys baked into provisioned cloud workers | `./.ssh/authorized_keys` |
 
 ---

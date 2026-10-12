@@ -37,6 +37,12 @@ async def list_models():
 
 @router.post("", status_code=202)
 async def add_model(body: AddModelBody):
+    if not deps.egress_allowed():
+        raise HTTPException(
+            403,
+            f"this install has no route to the {body.source} registry; stage "
+            "the model on the control plane and POST /v1/models/import",
+        )
     deps.get("downloader").start(source=body.source, model_id=body.model_id,
                                  revision=body.revision, engine_hint=body.engine)
     return {"status": "downloading", "model_id": body.model_id}

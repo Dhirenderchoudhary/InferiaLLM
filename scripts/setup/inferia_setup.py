@@ -253,6 +253,7 @@ def build_env(
     # --- Model cache ---
     env["INFERIA_MODEL_CACHE_DIR"] = ""
     env["INFERIA_MODEL_CACHE_MAX_GB"] = "100"
+    env["INFERIA_MODEL_EGRESS"] = "true"
     return env
 
 

@@ -73,6 +73,9 @@ services:
       - INFERIA_MODEL_CACHE_MAX_GB=${INFERIA_MODEL_CACHE_MAX_GB:-100}
       - INFERIA_HF_TOKEN=${INFERIA_HF_TOKEN:-}
       - INFERIA_MODEL_MIRROR_BASE=${INFERIA_MODEL_MIRROR_BASE:-}
+      # false declares an air-gapped install: import-only cache, no origin
+      # fallback. Defaulted rather than left blank because it parses as a bool.
+      - INFERIA_MODEL_EGRESS=${INFERIA_MODEL_EGRESS:-true}
       - APP_PORT=${APP_PORT:-8000}
     volumes:
       - appdata:/data

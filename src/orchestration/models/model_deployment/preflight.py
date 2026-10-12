@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from orchestration.models.model_cache import deps as cache_deps
+
 logger = logging.getLogger(__name__)
 
 HF_API_BASE = "https://huggingface.co/api/models"
@@ -52,6 +54,8 @@ async def fetch_native_max_len(
     crashes during model load). Returns None on any failure (gated / missing /
     parse error); callers then let the engine derive the context itself.
     """
+    if not cache_deps.egress_allowed():
+        return None
     url = f"{HF_RESOLVE_BASE}/{model_id}/resolve/main/config.json"
     headers = {}
     if hf_token:
@@ -135,6 +139,8 @@ async def check_model_accessibility(
     Check if a HuggingFace model is accessible.
     Fails open (accessible=True, skipped=True) if HF API is unreachable.
     """
+    if not cache_deps.egress_allowed():
+        return PreflightResult(accessible=True, skipped=True)
     url = f"{HF_API_BASE}/{model_id}"
     headers = {}
     if hf_token:
@@ -190,6 +196,8 @@ async def check_model_format(
 
     # If engine doesn't require config.json, skip
     if engine_lower not in ENGINES_REQUIRING_CONFIG_JSON:
+        return FormatCheckResult(compatible=True, skipped=True)
+    if not cache_deps.egress_allowed():
         return FormatCheckResult(compatible=True, skipped=True)
 
     url = f"{HF_API_BASE}/{model_id}"
@@ -267,7 +275,7 @@ async def check_ollama_model_exists(model_id: str) -> OllamaCheckResult:
     - Standard: https://ollama.com/library/{name} or https://ollama.com/library/{name}:{tag}
     - Namespaced: https://ollama.com/{namespace}/{name}
     """
-    if not model_id:
+    if not model_id or not cache_deps.egress_allowed():
         return OllamaCheckResult(accessible=True, skipped=True)
 
     # Determine URL based on whether model_id has a namespace (contains /)
@@ -306,6 +314,8 @@ async def fetch_hf_model_info(
     model_id: str, hf_token: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
     """Fetch full model metadata from HF API. Returns None on failure."""
+    if not cache_deps.egress_allowed():
+        return None
     url = f"{HF_API_BASE}/{model_id}"
     headers = {}
     if hf_token:

@@ -516,6 +516,15 @@ async def serve():
         eviction=_mc_evict,
     )
 
+    # Every egress guard reads this through deps, and a missing settings
+    # object would disable them all silently. Log the mode so it is checkable.
+    if not mc_deps.egress_allowed():
+        logger.info(
+            "model egress is off: the cache is import-only and mirror misses "
+            "fail without contacting origin (mirror base %s)",
+            settings.model_mirror_base,
+        )
+
     app.include_router(mc_api.router)
     app.include_router(mc_mirror_hf.router)
     app.include_router(mc_mirror_ollama.router)

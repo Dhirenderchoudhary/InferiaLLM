@@ -4,7 +4,7 @@ Orchestration Service Configuration
 
 import os
 from typing import Any, ClassVar, Optional
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from common.service_ports import depin_sidecar_url
 
@@ -191,6 +191,23 @@ class Settings(BaseSettings):
     model_mirror_base: str = Field(
         default="", validation_alias="INFERIA_MODEL_MIRROR_BASE"
     )
+    model_egress: bool = Field(
+        default=True,
+        validation_alias="INFERIA_MODEL_EGRESS",
+        description="False declares an install with no route to huggingface.co "
+                    "or registry.ollama.ai; the cache is then filled by import "
+                    "only and every miss fails fast.",
+    )
+
+    @model_validator(mode="after")
+    def _egress_off_needs_a_mirror(self):
+        if not self.model_egress and not self.model_mirror_base.strip():
+            raise ValueError(
+                "INFERIA_MODEL_EGRESS=false requires INFERIA_MODEL_MIRROR_BASE: "
+                "an empty base leaves the mirror dormant, so every worker would "
+                "be sent to an origin this install cannot reach"
+            )
+        return self
 
     @property
     def is_development(self) -> bool:

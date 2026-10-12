@@ -67,6 +67,20 @@ class CachePaths:
         """
         return self.ollama_model_dir(model_id) / _sanitize(revision)
 
+    def files_present(self, source: str, model_id: str, revision: str) -> bool:
+        """Whether this row's cache directory actually holds its files.
+
+        A row can read ``cached`` while its directory has been evicted, so the
+        status alone does not mean the mirror can serve the model.
+        """
+        if source == "hf":
+            d = self.hf_dir(model_id, revision)
+            return d.is_dir() and any(d.iterdir())
+        if source == "ollama":
+            # The mirror reads this file first, so blobs alone are not enough.
+            return (self.ollama_dir(model_id, revision) / "manifest.json").is_file()
+        return False
+
     def dir_size_bytes(self, d: Path) -> int:
         """Return the total size in bytes of all files under *d*."""
         if not d.exists():

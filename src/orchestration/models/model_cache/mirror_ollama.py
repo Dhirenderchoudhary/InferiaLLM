@@ -52,6 +52,9 @@ async def get_manifest(name: str, ref: str) -> Response:
         if mpath.is_file():
             return Response(content=mpath.read_bytes(), media_type=_MANIFEST_CT)
 
+    if not deps.egress_allowed():
+        raise HTTPException(404, "not in the cache, and this install has no egress")
+
     # Last resort: fetch from origin (not cached, no in-flight pre-warm).
     url = f"{_OLLAMA}/v2/{name}/manifests/{ref}"
     async with deps.get("http_client").stream(
@@ -98,6 +101,9 @@ async def head_manifest(name: str, ref: str) -> Response:
         await dl.await_key(source="ollama", model_id=model_id, revision=ref)
         if mpath.is_file():
             return _ok(mpath.stat().st_size)
+
+    if not deps.egress_allowed():
+        raise HTTPException(404, "not in the cache, and this install has no egress")
 
     client = deps.get("http_client")
     if client is None:
@@ -165,6 +171,9 @@ async def head_blob(name: str, digest: str) -> Response:
         cand = _find()
         if cand is not None:
             return _ok(cand.stat().st_size)
+
+    if not deps.egress_allowed():
+        raise HTTPException(404, "not in the cache, and this install has no egress")
 
     client = deps.get("http_client")
     if client is None:
@@ -281,6 +290,9 @@ async def get_blob(name: str, digest: str, request: Request) -> Response:
             cand = rev_dir / fname
             if cand.is_file():
                 return _serve_cached_blob(cand, request, digest)
+
+    if not deps.egress_allowed():
+        raise HTTPException(404, "not in the cache, and this install has no egress")
 
     url = f"{_OLLAMA}/v2/{name}/blobs/{digest}"
     upstream_ctx = deps.get("http_client").stream("GET", url)

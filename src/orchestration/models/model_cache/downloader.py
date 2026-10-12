@@ -23,6 +23,8 @@ import asyncio
 import logging
 import os
 
+from . import deps
+
 logger = logging.getLogger("model_cache.downloader")
 
 # Ollama registry base URL
@@ -166,6 +168,14 @@ class DownloadManager:
                 and self._files_present(source, model_id, revision)
             ):
                 return
+            # Backstop for the deploy pre-warm: a row that says cached but
+            # whose files were evicted would otherwise re-fetch from origin.
+            if import_from is None and not deps.egress_allowed(self.settings):
+                await self.repo.set_status(
+                    cid, "error",
+                    "this install has no model egress; import the model instead",
+                )
+                return
             if import_from is not None:
                 await self._run_import(cid, source, model_id, revision, import_from)
             elif source == "hf":
@@ -251,20 +261,9 @@ class DownloadManager:
         )
 
     def _files_present(self, source, model_id, revision) -> bool:
-        """Whether this row's cache directory actually holds its files.
-
-        A row can read ``cached`` while its directory has been removed, and
-        skipping the fetch then leaves nothing for the mirror to serve.
-        """
         if self.paths is None:
             return False
-        if source == "hf":
-            d = self.paths.hf_dir(model_id, revision)
-            return d.is_dir() and any(d.iterdir())
-        if source == "ollama":
-            # The mirror reads this file first, so blobs alone are not enough.
-            return (self.paths.ollama_dir(model_id, revision) / "manifest.json").is_file()
-        return False
+        return self.paths.files_present(source, model_id, revision)
 
     async def _run_prewarm(self, cid, *, list_fn, file_fn, model_id, revision):
         """Enumerate files via *list_fn*, download each via *file_fn*, update progress.

@@ -23,33 +23,44 @@ _ADAPTER_FILE = os.path.normpath(
 
 
 def _load_adapter_class():
-    """Load NosanaAdapter directly from the source file in this worktree."""
+    """Load NosanaAdapter directly from the source file in this worktree.
 
-    # Stub config
-    fake_settings = MagicMock()
-    fake_settings.internal_api_key = "test-key"
-    fake_settings.nosana_sidecar_url = "http://localhost:9999"
-    config_mod = types.ModuleType("orchestration.config")
-    config_mod.settings = fake_settings
-    sys.modules["orchestration.config"] = config_mod
-
-    # Stub job_builder
+    The stubs are put back afterwards. Leaving them installed hands every
+    later test that imports orchestration.config a bare module instead.
+    """
     jb_path = (
         "orchestration.provisioning.engine"
         ".adapters.nosana.job_builder"
     )
-    jb_mod = types.ModuleType(jb_path)
-    jb_mod.build_job_definition = MagicMock()
-    jb_mod.create_training_job = MagicMock()
-    jb_mod.INTERNAL_API_KEY = "stub-key"
-    sys.modules[jb_path] = jb_mod
+    saved = {k: sys.modules.get(k) for k in ("orchestration.config", jb_path)}
+    try:
+        # Stub config
+        fake_settings = MagicMock()
+        fake_settings.internal_api_key = "test-key"
+        fake_settings.nosana_sidecar_url = "http://localhost:9999"
+        config_mod = types.ModuleType("orchestration.config")
+        config_mod.settings = fake_settings
+        sys.modules["orchestration.config"] = config_mod
 
-    # Load the module from the exact file path
-    mod_name = "nosana_adapter_under_test"
-    spec = importlib.util.spec_from_file_location(mod_name, _ADAPTER_FILE)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.NosanaAdapter
+        # Stub job_builder
+        jb_mod = types.ModuleType(jb_path)
+        jb_mod.build_job_definition = MagicMock()
+        jb_mod.create_training_job = MagicMock()
+        jb_mod.INTERNAL_API_KEY = "stub-key"
+        sys.modules[jb_path] = jb_mod
+
+        # Load the module from the exact file path
+        mod_name = "nosana_adapter_under_test"
+        spec = importlib.util.spec_from_file_location(mod_name, _ADAPTER_FILE)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.NosanaAdapter
+    finally:
+        for name, prev in saved.items():
+            if prev is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = prev
 
 
 NosanaAdapter = _load_adapter_class()

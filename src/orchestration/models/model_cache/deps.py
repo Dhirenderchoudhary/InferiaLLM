@@ -45,6 +45,17 @@ def get(name: str):
     return _state.get(name)
 
 
+def egress_allowed(settings=None) -> bool:
+    """Whether this install may reach huggingface.co and registry.ollama.ai.
+
+    Pass *settings* to ask about an explicitly injected object rather than the
+    configured singleton. True for a settings object without the field, so an
+    install that never sets it keeps the connected behaviour.
+    """
+    s = settings if settings is not None else _state.get("settings")
+    return bool(getattr(s, "model_egress", True))
+
+
 def _reset() -> None:
     """Clear all state.  **Test helper only — do not call in production.**"""
     _state.clear()
