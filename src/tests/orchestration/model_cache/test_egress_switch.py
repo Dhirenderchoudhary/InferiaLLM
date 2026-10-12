@@ -248,7 +248,7 @@ class TestRefusingAnUnloadableDeploy:
     @staticmethod
     def _cached():
         return {"source": "hf", "model_id": REPO, "revision": "main",
-                "status": "cached"}
+                "status": "cached", "commit_sha": COMMIT}
 
     async def _blocked(self, tmp_path, *, egress=False, row=None, recipe="vllm",
                        uri=REPO, on_disk=True):
@@ -298,6 +298,30 @@ class TestRefusingAnUnloadableDeploy:
     ):
         """sglang loads its own way, so it is neither pre-warmed nor mirrored."""
         assert await self._blocked(tmp_path, recipe="sglang") is None
+
+    async def test_a_model_downloaded_while_connected_blocks(self, tmp_path):
+        """Only an import records commit_sha, and the HF mirror can answer
+        offline from nothing else. Without this the deploy is accepted and
+        then fails at load, which is what the gate exists to prevent.
+        """
+        row = {**self._cached(), "commit_sha": None}
+        assert await self._blocked(tmp_path, row=row) == REPO
+
+    async def test_an_import_in_flight_has_no_commit_yet_and_passes(
+        self, tmp_path
+    ):
+        """_run_import records the commit just before flipping to cached, so a
+        downloading row legitimately has none."""
+        row = {**self._cached(), "status": "downloading", "commit_sha": None}
+        assert await self._blocked(tmp_path, row=row, on_disk=False) is None
+
+    async def test_an_ollama_row_needs_no_commit(self, tmp_path):
+        """/v2 serves from the manifest on disk, not from recorded metadata."""
+        row = {"source": "ollama", "model_id": "qwen2", "revision": "0.5b",
+               "status": "cached"}
+        assert await self._blocked(
+            tmp_path, row=row, recipe="ollama", uri="qwen2:0.5b"
+        ) is None
 
     async def test_a_cached_row_whose_files_were_evicted_blocks(self, tmp_path):
         """Eviction leaves the row reading cached, so the status alone would
@@ -424,6 +448,43 @@ class TestTheProviderOriginPreference:
     async def test_origin_still_wins_when_egress_is_allowed(self, tmp_path):
         spec = await self._spec_for(tmp_path, egress=True)
         assert "env" not in spec
+
+
+class TestAMixedCaseEngineName:
+    """The engine string reaches the cache key and the load spec as sent. An
+    unnormalised one keys the wrong source and points the worker at origin."""
+
+    pytestmark = pytest.mark.asyncio
+
+    def test_the_cache_key_matches_the_lowercase_one(self):
+        assert mirror_decision.derive_cache_key(
+            "Ollama", "qwen2:0.5b"
+        ) == mirror_decision.derive_cache_key("ollama", "qwen2:0.5b")
+
+    def test_the_spec_still_gets_the_mirror(self):
+        spec = {"model": {"artifact_uri": "qwen2:0.5b"}}
+        mirror_decision.apply_mirror_to_spec(
+            spec, recipe="Ollama", mirror_base="http://cp:8000/api",
+        )
+        assert spec["model"]["artifact_uri"].startswith("http://cp:8000/")
+
+    @staticmethod
+    async def _gate(row, tmp_path):
+        _configure(tmp_path)
+        return await mirror_decision.blocking_uncached_model(
+            recipe="Ollama", artifact_uri="qwen2:0.5b",
+            cache_repo=_Repo(row), cache_paths=None,
+        )
+
+    async def test_the_deploy_gate_passes_a_cached_one(self, tmp_path):
+        row = {"source": "ollama", "model_id": "qwen2", "revision": "0.5b",
+               "status": "cached"}
+        assert await self._gate(row, tmp_path) is None
+
+    async def test_the_deploy_gate_blocks_an_uncached_one(self, tmp_path):
+        """An unnormalised name falls out of MIRRORED_RECIPES and skips the
+        gate entirely, so the deploy is accepted and fails at load."""
+        assert await self._gate(None, tmp_path) == "qwen2"
 
 
 class TestTheGatewayForwardsTheMirrorHeaders:

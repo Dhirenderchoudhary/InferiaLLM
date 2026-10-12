@@ -19,7 +19,12 @@ MIRRORED_RECIPES = _HF_RECIPES + ("ollama",)
 
 def derive_cache_key(recipe: str, artifact_uri: str) -> tuple[str, str, str]:
     """Map (recipe, artifact_uri) -> (source, model_id, revision) — the SAME
-    natural key the deploy pre-warm uses (deployment_server.deploy_model)."""
+    natural key the deploy pre-warm uses (deployment_server.deploy_model).
+
+    The recipe is normalised here so every caller agrees on the key; an engine
+    sent as ``Ollama`` otherwise fell through to the ``hf`` branch below.
+    """
+    recipe = (recipe or "").lower()
     raw = str(artifact_uri).split("://", 1)[-1]  # strip any scheme
     if recipe == "ollama":
         name, _, tag = raw.partition(":")
@@ -41,6 +46,7 @@ def apply_mirror_to_spec(spec: dict, *, recipe: str, mirror_base: str) -> None:
     vLLM/TEI container) pulls through the CP. Ollama: rewrite artifact_uri to a
     host-prefixed ref so `ollama pull` hits the CP /v2 registry mirror.
     """
+    recipe = (recipe or "").lower()
     base = mirror_base.rstrip("/")
     if recipe in _HF_RECIPES:
         spec.setdefault("env", {})["HF_ENDPOINT"] = base + "/hf"
@@ -72,13 +78,17 @@ async def blocking_uncached_model(
     """
     if cache_deps.egress_allowed() or cache_repo is None:
         return None
-    if not artifact_uri or recipe not in MIRRORED_RECIPES:
+    if not artifact_uri or (recipe or "").lower() not in MIRRORED_RECIPES:
         return None
     source, model_id, revision = derive_cache_key(recipe, str(artifact_uri))
     row = await cache_repo.get_by_key(
         source=source, model_id=model_id, revision=revision,
     )
     if choose_fetch_source(row) != "mirror":
+        return model_id
+    # HF is served offline only from recorded metadata, which an import writes
+    # and a download does not; the mirror would answer with no X-Repo-Commit.
+    if source == "hf" and row.get("status") == "cached" and not row.get("commit_sha"):
         return model_id
     # A download in flight has not written its files yet.
     if (
