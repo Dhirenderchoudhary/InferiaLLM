@@ -59,6 +59,10 @@ class ModelCacheRepo:
                   bytes_total = COALESCE($2, bytes_total),
                   bytes_done  = COALESCE($3, bytes_done),
                   status      = COALESCE($4, status),
+                  -- A row that reached 'cached' has no error. Leaving the old
+                  -- text behind reports a failure on a model that is now fine.
+                  error       = CASE WHEN COALESCE($4, status) = 'cached'
+                                     THEN NULL ELSE error END,
                   updated_at  = now()
                 WHERE id = $1
                 """,

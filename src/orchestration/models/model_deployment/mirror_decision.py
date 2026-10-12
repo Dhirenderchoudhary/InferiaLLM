@@ -9,13 +9,22 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
+from orchestration.models.model_cache import deps as cache_deps
+
 _HF_RECIPES = ("vllm", "tei", "infinity", "inferia-diffusion")
 _MIRROR_STATES = ("cached", "downloading", "pending")
+# Recipes whose weights come through the CP cache; anything else loads its own.
+MIRRORED_RECIPES = _HF_RECIPES + ("ollama",)
 
 
 def derive_cache_key(recipe: str, artifact_uri: str) -> tuple[str, str, str]:
     """Map (recipe, artifact_uri) -> (source, model_id, revision) — the SAME
-    natural key the deploy pre-warm uses (deployment_server.deploy_model)."""
+    natural key the deploy pre-warm uses (deployment_server.deploy_model).
+
+    The recipe is normalised here so every caller agrees on the key; an engine
+    sent as ``Ollama`` otherwise fell through to the ``hf`` branch below.
+    """
+    recipe = (recipe or "").lower()
     raw = str(artifact_uri).split("://", 1)[-1]  # strip any scheme
     if recipe == "ollama":
         name, _, tag = raw.partition(":")
@@ -37,6 +46,7 @@ def apply_mirror_to_spec(spec: dict, *, recipe: str, mirror_base: str) -> None:
     vLLM/TEI container) pulls through the CP. Ollama: rewrite artifact_uri to a
     host-prefixed ref so `ollama pull` hits the CP /v2 registry mirror.
     """
+    recipe = (recipe or "").lower()
     base = mirror_base.rstrip("/")
     if recipe in _HF_RECIPES:
         spec.setdefault("env", {})["HF_ENDPOINT"] = base + "/hf"
@@ -56,6 +66,40 @@ def apply_mirror_to_spec(spec: dict, *, recipe: str, mirror_base: str) -> None:
         spec.setdefault("env", {})["INFERIA_OLLAMA_SERVED_NAME"] = raw
 
 
+async def blocking_uncached_model(
+    *, recipe: str, artifact_uri: str | None, cache_repo, cache_paths=None,
+) -> str | None:
+    """The model id a no-egress deploy cannot load, or None if it can.
+
+    The status test is the same ``choose_fetch_source`` the load spec uses, so
+    the gate never refuses what the mirror would have served. A row can read
+    ``cached`` after eviction removed its files, so a settled row is also
+    checked against the disk.
+    """
+    if cache_deps.egress_allowed() or cache_repo is None:
+        return None
+    if not artifact_uri or (recipe or "").lower() not in MIRRORED_RECIPES:
+        return None
+    source, model_id, revision = derive_cache_key(recipe, str(artifact_uri))
+    row = await cache_repo.get_by_key(
+        source=source, model_id=model_id, revision=revision,
+    )
+    if choose_fetch_source(row) != "mirror":
+        return model_id
+    # HF is served offline only from recorded metadata, which an import writes
+    # and a download does not; the mirror would answer with no X-Repo-Commit.
+    if source == "hf" and row.get("status") == "cached" and not row.get("commit_sha"):
+        return model_id
+    # A download in flight has not written its files yet.
+    if (
+        cache_paths is not None
+        and row.get("status") == "cached"
+        and not cache_paths.files_present(source, model_id, revision)
+    ):
+        return model_id
+    return None
+
+
 async def resolve_and_apply_mirror(
     spec: dict, *, recipe: str, artifact_uri: str, mirror_base: str, cache_repo,
     provider: str | None = None,
@@ -71,7 +115,9 @@ async def resolve_and_apply_mirror(
     # inject the CP mirror for them. Lazy import: registry pulls in every
     # provider adapter, so importing it at module load would be heavy and risk
     # an import cycle through the deployment modules that import this one.
-    if provider is not None:
+    # With no egress those same VMs cannot reach origin either, so the
+    # mirror is the only source and the preference is ignored.
+    if provider is not None and cache_deps.egress_allowed():
         from orchestration.provisioning.engine.registry import (
             provider_prefers_origin_model_fetch,
         )

@@ -169,6 +169,14 @@ async def head_file(repo: str, rev: str, filename: str) -> Response:
         except Exception:
             cached_size = None
 
+    if not deps.egress_allowed():
+        # Falling through answers 200 without x-repo-commit, which
+        # huggingface_hub reads as a file it must not use.
+        if cached_size is None:
+            return Response(status_code=404, headers={"x-error-code": "EntryNotFound"})
+        headers["content-length"] = cached_size
+        return Response(status_code=200, headers=headers)
+
     try:
         # First hop, no redirect. HF answers resolve HEADs with a 302/307 to the
         # actual blob (CDN for LFS, /api/resolve-cache for small files) and
@@ -279,6 +287,14 @@ async def model_info(repo: str) -> Response:
 
 async def _proxy_api(rest: str, query: str = "") -> Response:
     """Forward an API call to HuggingFace unchanged."""
+    if not deps.egress_allowed():
+        return Response(
+            content=json.dumps(
+                {"error": "not in the cache, and this install has no egress"}
+            ),
+            status_code=404,
+            media_type="application/json",
+        )
     url = f"{_HF}/api/{rest}"
     if query:
         url += f"?{query}"
@@ -294,16 +310,7 @@ async def _proxy_api(rest: str, query: str = "") -> Response:
 @router.get("/api/{rest:path}")
 async def proxy_api(rest: str, request: Request) -> Response:
     """Proxy HuggingFace API metadata straight through (not cached)."""
-    url = f"{_HF}/api/{rest}"
-    if request.url.query:
-        url += f"?{request.url.query}"
-    async with _client().stream("GET", url, headers=_hf_headers()) as up:
-        body = b"".join([chunk async for chunk in up.aiter_bytes()])
-        return Response(
-            content=body,
-            status_code=up.status_code,
-            media_type=up.headers.get("content-type", "application/json"),
-        )
+    return await _proxy_api(rest, request.url.query)
 
 
 @router.get("/{repo:path}/resolve/{rev}/{filename:path}")
@@ -362,6 +369,9 @@ async def resolve_file(
             if repo_obj:
                 await repo_obj.touch_by_key(source="hf", model_id=repo, revision=rev)
             return FileResponse(str(target))
+
+    if not deps.egress_allowed():
+        raise HTTPException(404, "not in the cache, and this install has no egress")
 
     # ------------------------------------------------------------------
     # Cache miss — pre-flight upstream check then stream

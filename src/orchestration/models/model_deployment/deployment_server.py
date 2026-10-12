@@ -1802,6 +1802,34 @@ async def deploy_model(req: DeployModelRequest, request: Request):
             cfg["env"] = env
             req.configuration = cfg
 
+    # 1e. Refuse a deploy this install cannot fetch weights for, before the
+    # deployment row exists and before anything is provisioned.
+    from orchestration.models.model_cache import deps as _mc_deps
+    from orchestration.models.model_deployment.mirror_decision import (
+        MIRRORED_RECIPES,
+        blocking_uncached_model,
+        derive_cache_key,
+    )
+    _recipe = (req.engine or "vllm").lower()
+    _blocked = await blocking_uncached_model(
+        recipe=_recipe,
+        artifact_uri=resolve_artifact_uri(
+            configuration=req.configuration,
+            inference_model=req.inference_model,
+            model_name=req.model_name,
+        ),
+        cache_repo=_mc_deps.get("repo"),
+        cache_paths=_mc_deps.get("paths"),
+    )
+    if _blocked:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{_blocked} is not available in the model cache and this "
+                "install has no model egress; import it before deploying"
+            ),
+        )
+
     # 2. Create deployment row (CREATED state, target_pool_id=pool_id)
     deploy_id = uuid4()
     policies_val = req.policies
@@ -1840,10 +1868,6 @@ async def deploy_model(req: DeployModelRequest, request: Request):
     # in parallel with EC2 provisioning so the model is ready when the worker
     # connects.  Best-effort: never block the deploy on cache failures.
     try:
-        from orchestration.models.model_cache import deps as _mc_deps
-        from orchestration.models.model_deployment.mirror_decision import (
-            derive_cache_key,
-        )
         _dl = _mc_deps.get("downloader")
         # Key the pre-warm off the SAME (resolve_artifact_uri -> derive_cache_key)
         # chain the mirror decision uses (resolve_and_apply_mirror), so the row
@@ -1863,9 +1887,12 @@ async def deploy_model(req: DeployModelRequest, request: Request):
         from orchestration.provisioning.engine.registry import (
             provider_prefers_origin_model_fetch,
         )
-        _origin_fetch = provider_prefers_origin_model_fetch(pool_row.get("provider"))
-        if _dl and _uri and not _origin_fetch and (req.engine or "vllm") in ("vllm", "tei", "infinity", "ollama", "inferia-diffusion"):
-            _src, _mid, _rev = derive_cache_key(req.engine or "vllm", str(_uri))
+        _origin_fetch = (
+            provider_prefers_origin_model_fetch(pool_row.get("provider"))
+            and _mc_deps.egress_allowed()
+        )
+        if _dl and _uri and not _origin_fetch and _recipe in MIRRORED_RECIPES:
+            _src, _mid, _rev = derive_cache_key(_recipe, str(_uri))
             _dl.start(source=_src, model_id=_mid, revision=_rev, engine_hint=req.engine)
     except Exception:
         pass  # pre-warm is best-effort; never block a deploy
