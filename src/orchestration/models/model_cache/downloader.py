@@ -277,7 +277,15 @@ class DownloadManager:
         large (multi-GB) weight files.  The final ``set_progress`` call
         records the ACTUAL downloaded total.
         """
-        files = await list_fn(model_id, revision)
+        # A branch can move mid-download; the commit must match the listing.
+        # Best-effort like the write below: no commit is better than no model.
+        commit = None
+        if commit_fn is not None:
+            try:
+                commit = await commit_fn(model_id, revision)
+            except Exception as e:
+                logger.warning("could not resolve %s@%s: %s", model_id, revision, e)
+        files = await list_fn(model_id, commit or revision)
         total = sum(int(f.get("size") or 0) for f in files)
         done = 0
         last_reported = 0
@@ -299,7 +307,7 @@ class DownloadManager:
             try:
                 await self.repo.set_metadata(
                     cid,
-                    commit_sha=await commit_fn(model_id, revision),
+                    commit_sha=commit,
                     file_meta={
                         f["path"]: {
                             "size": f.get("size", 0), "etag": f.get("etag", ""),

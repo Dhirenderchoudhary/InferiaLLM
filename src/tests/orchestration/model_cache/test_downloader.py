@@ -899,6 +899,54 @@ async def test_ollama_list_persists_manifest(tmp_path):
 # Offline metadata on the download path
 # ---------------------------------------------------------------------------
 
+async def test_the_tree_is_listed_at_the_commit_not_the_branch():
+    """A branch can move during a long download, which would leave the
+    recorded commit describing files the listing never saw."""
+    repo = FakeRepo()
+    listed_at = []
+
+    async def _list(model_id, revision):
+        listed_at.append(revision)
+        return [{"path": "config.json", "size": 2, "etag": "e"}]
+
+    async def _file(model_id, revision, path, on_bytes):
+        await on_bytes(2)
+
+    async def _commit(model_id, revision):
+        return "f" * 40
+
+    dm = DownloadManager(
+        repo=repo, paths=None, fetch_list=_list, fetch_file=_file,
+        fetch_commit=_commit, http_client=None, settings=None,
+    )
+    await dm.prewarm(source="hf", model_id="org/m")
+
+    assert listed_at == ["f" * 40]
+
+
+async def test_a_failing_commit_lookup_does_not_fail_the_download():
+    repo = FakeRepo()
+
+    async def _list(model_id, revision):
+        return [{"path": "config.json", "size": 2, "etag": "e"}]
+
+    async def _file(model_id, revision, path, on_bytes):
+        await on_bytes(2)
+
+    async def _commit(model_id, revision):
+        raise RuntimeError("hf api down")
+
+    dm = DownloadManager(
+        repo=repo, paths=None, fetch_list=_list, fetch_file=_file,
+        fetch_commit=_commit, http_client=None, settings=None,
+    )
+    await dm.prewarm(source="hf", model_id="org/m")
+
+    row = next(iter(repo._rows.values()))
+    assert row["status"] == "cached"
+    assert row["commit_sha"] is None
+
+
 async def test_hf_prewarm_records_the_commit_and_etags():
     repo = FakeRepo()
 

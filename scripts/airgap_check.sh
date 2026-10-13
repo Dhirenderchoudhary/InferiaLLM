@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
 # Prove the model cache works with no internet.
 #
+# Needs an $APP image whose /v1/models/import endpoint exists; an older one
+# fails at "import request rejected".
+#
 # Stage 1 (no GPU): a real huggingface_hub client on a Docker network created
 # with --internal — no NAT, so huggingface.co is unreachable — downloads an
 # imported model through the mirror.
 #
+# Stage 1-ollama (no GPU): a real ollama client on that network pulls a cached
+# model from the /v2 mirror and answers a prompt on CPU.
+#
 # Stage 2 (needs a GPU): vLLM on the same network loads that model.
 #
 #   ./scripts/airgap_check.sh stage1
+#   ./scripts/airgap_check.sh stage1-ollama
 #   ./scripts/airgap_check.sh stage2 <model-id>
 #   ./scripts/airgap_check.sh clean
 set -euo pipefail
@@ -17,6 +24,9 @@ NET=airgap-check
 MODEL=${MODEL:-airgap/demo}
 STAGE_DIR=/var/lib/inferia/models/import/airgap-demo
 IMAGE=$(docker inspect "$APP" --format '{{.Config.Image}}')
+OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2:0.5b}
+OLLAMA_IMAGE=${OLLAMA_IMAGE:-ollama/ollama:latest}
+OLLAMA_C=airgap-ollama
 
 note() { printf '\n== %s\n' "$1"; }
 fail() { printf 'FAIL  %s\n' "$1"; exit 1; }
@@ -27,13 +37,26 @@ need_key() {
   [ -n "$KEY" ] || fail "INTERNAL_API_KEY not found in .env"
 }
 
-stage1() {
-  need_key
+need_egress_off() {
+  # The control plane is not isolated, so with egress on a miss comes from
+  # origin. Asked of the code, not the env: an old image ignores the variable.
+  docker exec "$APP" python -c \
+    "from orchestration.config import settings; raise SystemExit(0 if settings.model_egress is False else 1)" \
+    2>/dev/null \
+    || fail "$APP must run an image with the egress switch, and INFERIA_MODEL_EGRESS=false"
+}
 
+ensure_net() {
   note "network with no route to the internet"
   docker network inspect "$NET" >/dev/null 2>&1 || docker network create --internal "$NET" >/dev/null
   docker network connect "$NET" "$APP" 2>/dev/null || true
   pass "network $NET ready, $APP attached"
+}
+
+stage1() {
+  need_key
+  need_egress_off
+  ensure_net
 
   note "stage a model and import it"
   docker exec "$APP" sh -c "
@@ -76,7 +99,13 @@ try:
 except OSError:
     print('PASS  huggingface.co is unreachable')
 
-from huggingface_hub import snapshot_download, hf_hub_download
+from huggingface_hub import snapshot_download, hf_hub_download, file_exists
+
+# Engines probe for optional files on every load. This answers False only if
+# the mirror's X-Error-Code reaches the client; a bare 404 raises instead.
+assert file_exists('$MODEL', 'special_tokens_map.json') is False
+print('PASS  an absent file resolves as absent, not as an error')
+
 p = hf_hub_download('$MODEL', 'config.json')
 assert open(p).read().startswith('{'), 'config.json came back wrong'
 print('PASS  hf_hub_download')
@@ -93,6 +122,58 @@ print('PASS  snapshot_download, weights byte-exact')
   echo "next: ./scripts/airgap_check.sh stage2 $MODEL   (needs a GPU host)"
 }
 
+stage1_ollama() {
+  docker image inspect "$OLLAMA_IMAGE" >/dev/null 2>&1 \
+    || fail "pull $OLLAMA_IMAGE on the host first (the test network has no internet)"
+
+  need_egress_off
+
+  note "the model is already in the control-plane cache"
+  curl -sf -o /dev/null \
+    -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+    "http://localhost:8000/v2/library/${OLLAMA_MODEL%%:*}/manifests/${OLLAMA_MODEL##*:}" \
+    || fail "$OLLAMA_MODEL is not in the cache; import or pre-warm it first"
+  pass "/v2 serves its manifest"
+
+  ensure_net
+
+  note "a real ollama client with no internet pulls from the mirror"
+  docker rm -f "$OLLAMA_C" >/dev/null 2>&1 || true
+  docker run -d --name "$OLLAMA_C" --network "$NET" "$OLLAMA_IMAGE" >/dev/null
+  for _ in $(seq 1 30); do
+    docker exec "$OLLAMA_C" ollama list >/dev/null 2>&1 && break
+    sleep 1
+  done
+  docker exec "$OLLAMA_C" ollama list >/dev/null 2>&1 || fail "ollama did not start"
+
+  # Prove there is no egress before trusting anything below.
+  if docker exec "$OLLAMA_C" \
+       timeout 5 bash -c "echo > /dev/tcp/registry.ollama.ai/443" 2>/dev/null; then
+    fail "the network reached registry.ollama.ai; it is not isolated"
+  fi
+  pass "registry.ollama.ai is unreachable"
+
+  # --insecure: the harness talks plain http to a container, where a real
+  # install points INFERIA_MODEL_MIRROR_BASE at https.
+  REF="$APP:8000/library/$OLLAMA_MODEL"
+  # Quiet on success; its progress bar otherwise buries every other result.
+  PULL_LOG=$(docker exec "$OLLAMA_C" ollama pull --insecure "$REF" 2>&1) || {
+    printf '%s\n' "$PULL_LOG" | tail -5
+    fail "ollama pull failed"
+  }
+  pass "ollama pull"
+
+  note "and runs it on CPU"
+  # stdout only: the spinner goes to stderr, and merging it makes any
+  # non-empty check pass on terminal escape codes alone.
+  OUT=$(docker exec "$OLLAMA_C" timeout 300 ollama run "$REF" "Reply with one word: ok" 2>/dev/null)
+  printf '%s' "$OUT" | grep -q '[A-Za-z]' || fail "the model produced no text"
+  printf 'PASS  inference answered: %s\n' "$(printf '%s' "$OUT" | tr -d '\r\n' | head -c 60)"
+
+  note "stage 1 ollama complete — a model ran with no internet"
+  echo "run ./scripts/airgap_check.sh clean to remove the container and network"
+}
+
 stage2() {
   local model=${1:-$MODEL}
   note "vLLM on the isolated network, weights from the mirror only"
@@ -105,6 +186,7 @@ stage2() {
 }
 
 clean() {
+  docker rm -f "$OLLAMA_C" >/dev/null 2>&1 || true
   docker exec "$APP" sh -c "rm -rf $STAGE_DIR" 2>/dev/null || true
   docker network disconnect "$NET" "$APP" 2>/dev/null || true
   docker network rm "$NET" 2>/dev/null || true
@@ -112,8 +194,9 @@ clean() {
 }
 
 case "${1:-}" in
-  stage1) stage1 ;;
-  stage2) stage2 "${2:-}" ;;
-  clean)  clean ;;
-  *) echo "usage: $0 {stage1|stage2 [model-id]|clean}"; exit 2 ;;
+  stage1)        stage1 ;;
+  stage1-ollama) stage1_ollama ;;
+  stage2)        stage2 "${2:-}" ;;
+  clean)         clean ;;
+  *) echo "usage: $0 {stage1|stage1-ollama|stage2 [model-id]|clean}"; exit 2 ;;
 esac
