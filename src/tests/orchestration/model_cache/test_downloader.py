@@ -37,6 +37,8 @@ class FakeRepo:
             "bytes_total": 0,
             "bytes_done": 0,
             "error": None,
+            "commit_sha": None,
+            "file_meta": {},
         }
         return row
 
@@ -48,6 +50,13 @@ class FakeRepo:
         row = self._make_row(source=source, model_id=model_id, revision=revision, engine_hint=engine_hint)
         self._rows[row["id"]] = row
         return row
+
+    async def set_metadata(self, cache_id, *, commit_sha, file_meta, pinned=None) -> None:
+        row = self._rows[str(cache_id)]
+        row["commit_sha"] = commit_sha
+        row["file_meta"] = file_meta
+        if pinned is not None:
+            row["pinned"] = pinned
 
     async def set_progress(self, cache_id, *, bytes_total=None, bytes_done=None, status=None) -> None:
         row = self._rows[str(cache_id)]
@@ -232,20 +241,24 @@ class _FakeHTTP:
 
 async def test_hf_list_uses_tree_api_with_sizes():
     tree = [
-        {"type": "file", "path": "config.json", "size": 651},
+        {"type": "file", "path": "config.json", "size": 651, "oid": "blob-sha"},
         {"type": "directory", "path": "sub"},
-        {"type": "file", "path": "model.safetensors", "size": 0,
-         "lfs": {"size": 250540281}},
+        {"type": "file", "path": "model.safetensors", "size": 0, "oid": "ptr-sha",
+         "lfs": {"size": 250540281, "oid": "lfs-sha256"}},
     ]
     urls = []
     http = _FakeHTTP(status=200, body=_json.dumps(tree).encode(), record=urls)
     dm = DownloadManager(repo=FakeRepo(), paths=None, http_client=http, settings=None)
     files = await dm._hf_list("org/m", "main")
     assert "/tree/main?recursive=true" in urls[0]          # tree API, not siblings
-    assert {"path": "config.json", "size": 651} in files
+    by_path = {f["path"]: f for f in files}
+    assert by_path["config.json"]["size"] == 651
     # LFS size falls back from the lfs block:
-    assert {"path": "model.safetensors", "size": 250540281} in files
-    assert all(f["path"] != "sub" for f in files)          # directories skipped
+    assert by_path["model.safetensors"]["size"] == 250540281
+    # The etag the mirror serves: sha256 for an LFS object, blob sha otherwise.
+    assert by_path["config.json"]["etag"] == "blob-sha"
+    assert by_path["model.safetensors"]["etag"] == "lfs-sha256"
+    assert "sub" not in by_path                            # directories skipped
 
 
 async def test_hf_file_gated_raises_and_writes_nothing(tmp_path):
@@ -880,3 +893,104 @@ async def test_ollama_list_persists_manifest(tmp_path):
     import json
     data = json.loads(manifest.read_text())
     assert data["config"]["digest"] == "sha256:c"
+
+
+# ---------------------------------------------------------------------------
+# Offline metadata on the download path
+# ---------------------------------------------------------------------------
+
+async def test_hf_prewarm_records_the_commit_and_etags():
+    repo = FakeRepo()
+
+    async def _list(model_id, revision):
+        return [
+            {"path": "config.json", "size": 2, "etag": "e-cfg"},
+            {"path": "model.safetensors", "size": 9, "etag": "e-w"},
+        ]
+
+    async def _file(model_id, revision, path, on_bytes):
+        await on_bytes(1)
+
+    async def _commit(model_id, revision):
+        return "c" * 40
+
+    dm = DownloadManager(
+        repo=repo, paths=None, fetch_list=_list, fetch_file=_file,
+        fetch_commit=_commit, http_client=None, settings=None,
+    )
+    await dm.prewarm(source="hf", model_id="org/m")
+
+    row = next(iter(repo._rows.values()))
+    assert row["status"] == "cached"
+    assert row["commit_sha"] == "c" * 40
+    assert row["file_meta"]["config.json"] == {"size": 2, "etag": "e-cfg"}
+    assert row["file_meta"]["model.safetensors"]["etag"] == "e-w"
+
+
+async def test_a_metadata_failure_does_not_discard_a_finished_download():
+    """The files are on disk by then, and a download only happens with egress,
+    where the mirror can still answer metadata from origin."""
+
+    class _Repo(FakeRepo):
+        async def set_metadata(self, *a, **kw):
+            raise RuntimeError("db went away")
+
+    repo = _Repo()
+
+    async def _list(model_id, revision):
+        return [{"path": "config.json", "size": 2, "etag": "e"}]
+
+    async def _file(model_id, revision, path, on_bytes):
+        await on_bytes(2)
+
+    async def _commit(model_id, revision):
+        return "d" * 40
+
+    dm = DownloadManager(
+        repo=repo, paths=None, fetch_list=_list, fetch_file=_file,
+        fetch_commit=_commit, http_client=None, settings=None,
+    )
+    await dm.prewarm(source="hf", model_id="org/m")
+
+    row = next(iter(repo._rows.values()))
+    assert row["status"] == "cached"
+    assert row["error"] is None
+
+
+async def test_the_commit_comes_from_the_revision_endpoint():
+    urls = []
+    http = _FakeHTTP(status=200, body=b'{"sha": "abc123"}', record=urls)
+    dm = DownloadManager(repo=FakeRepo(), paths=None, http_client=http,
+                         settings=None)
+
+    assert await dm._hf_commit("org/m", "main") == "abc123"
+    assert "/api/models/org/m/revision/main" in urls[0]
+
+
+async def test_an_unreadable_revision_endpoint_yields_no_commit():
+    """The download still succeeds; the row is simply not servable offline."""
+    dm = DownloadManager(repo=FakeRepo(), paths=None,
+                         http_client=_FakeHTTP(status=404, body=b"{}"),
+                         settings=None)
+
+    assert await dm._hf_commit("org/m", "main") is None
+
+
+async def test_ollama_prewarm_records_no_commit(tmp_path):
+    """/v2 serves from the manifest on disk, so there is nothing to record."""
+    repo = FakeRepo()
+    dm = DownloadManager(repo=repo, paths=CachePaths(str(tmp_path)),
+                         http_client=_FakeHTTP(status=200, body=b"{}"),
+                         settings=None)
+    dm._ollama_list = lambda m, r: _done([])
+    await dm.prewarm(source="ollama", model_id="qwen2", revision="0.5b")
+
+    row = next(iter(repo._rows.values()))
+    assert row["status"] == "cached"
+    assert row["commit_sha"] is None
+
+
+def _done(value):
+    async def _c():
+        return value
+    return _c()
