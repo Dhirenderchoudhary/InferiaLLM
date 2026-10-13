@@ -41,13 +41,15 @@ def _ollama_name(model_id: str) -> str:
 
 
 class DownloadManager:
-    def __init__(self, *, repo, paths, fetch_list=None, fetch_file=None, http_client=None, settings=None):
+    def __init__(self, *, repo, paths, fetch_list=None, fetch_file=None,
+                 fetch_commit=None, http_client=None, settings=None):
         self.repo = repo
         self.paths = paths
         self.http_client = http_client
         self.settings = settings
         self._fetch_list = fetch_list or self._hf_list
         self._fetch_file = fetch_file or self._hf_file
+        self._fetch_commit = fetch_commit or self._hf_commit
         self._tasks: dict[tuple, asyncio.Task] = {}
         self._hf_token: str = ""
 
@@ -143,7 +145,8 @@ class DownloadManager:
         """Download all files for *model_id* at *revision* into the cache.
 
         Dispatches to the appropriate downloader based on *source*:
-        - ``hf``: HuggingFace (uses injectable ``_fetch_list``/``_fetch_file``)
+        - ``hf``: HuggingFace (injectable ``_fetch_list``/``_fetch_file``/
+          ``_fetch_commit``)
         - ``ollama``: Ollama registry (uses ``_ollama_list``/``_ollama_file``)
         - anything else: marks the row ``error``, since nothing was fetched
 
@@ -187,6 +190,7 @@ class DownloadManager:
                     file_fn=self._fetch_file,
                     model_id=model_id,
                     revision=revision,
+                    commit_fn=self._fetch_commit,
                 )
             elif source == "ollama":
                 await self._run_prewarm(
@@ -265,7 +269,8 @@ class DownloadManager:
             return False
         return self.paths.files_present(source, model_id, revision)
 
-    async def _run_prewarm(self, cid, *, list_fn, file_fn, model_id, revision):
+    async def _run_prewarm(self, cid, *, list_fn, file_fn, model_id, revision,
+                           commit_fn=None):
         """Enumerate files via *list_fn*, download each via *file_fn*, update progress.
 
         Progress is throttled to ~every 8 MB to avoid hammering the DB on
@@ -287,6 +292,26 @@ class DownloadManager:
 
         for f in files:
             await file_fn(model_id, revision, f["path"], on_bytes)
+
+        # Before the status flips: a cached row without this is one the mirror
+        # cannot answer for. Best-effort; the files are already on disk by here.
+        if commit_fn is not None:
+            try:
+                await self.repo.set_metadata(
+                    cid,
+                    commit_sha=await commit_fn(model_id, revision),
+                    file_meta={
+                        f["path"]: {
+                            "size": f.get("size", 0), "etag": f.get("etag", ""),
+                        }
+                        for f in files
+                    },
+                )
+            except Exception as e:
+                logger.warning(
+                    "could not record offline metadata for %s/%s: %s",
+                    model_id, revision, e,
+                )
 
         # Record the ACTUAL downloaded total (do not clobber with the
         # pre-computed `total`, which is 0 when the listing lacked sizes).
@@ -329,8 +354,36 @@ class DownloadManager:
             lfs = entry.get("lfs")
             if (size is None or size == 0) and isinstance(lfs, dict):
                 size = lfs.get("size")
-            files.append({"path": entry["path"], "size": int(size or 0)})
+            # What HF's resolve endpoint answers as the ETag: the sha256 for an
+            # LFS object, the git blob sha otherwise.
+            etag = (lfs or {}).get("oid") if isinstance(lfs, dict) else None
+            files.append({
+                "path": entry["path"],
+                "size": int(size or 0),
+                "etag": etag or entry.get("oid") or "",
+            })
         return files
+
+    async def _hf_commit(self, model_id, revision) -> str | None:
+        """The commit *revision* resolves to, or None if it cannot be read.
+
+        The tree listing does not carry it, and the mirror cannot answer a
+        single HF metadata request offline without it.
+        """
+        import json
+
+        url = f"https://huggingface.co/api/models/{model_id}/revision/{revision}"
+        try:
+            async with self.http_client.stream(
+                "GET", url, headers=self._hdr()
+            ) as up:
+                if up.status_code != 200:
+                    return None
+                body = b"".join([c async for c in up.aiter_bytes()])
+            sha = json.loads(body.decode()).get("sha")
+        except Exception:
+            return None
+        return sha if isinstance(sha, str) and sha else None
 
     async def _hf_file(self, model_id, revision, path, on_bytes):
         """Download a single HF file into the cache; skip if already present."""
