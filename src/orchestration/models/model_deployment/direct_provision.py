@@ -22,6 +22,10 @@ import time
 
 import aiohttp
 
+from orchestration.models.model_cache import deps as _mc_deps
+from orchestration.models.model_deployment.mirror_decision import (
+    resolve_and_apply_mirror,
+)
 from orchestration.provisioning.engine.registry import get_adapter
 
 log = logging.getLogger(__name__)
@@ -158,6 +162,31 @@ def _build_metadata(d: dict) -> dict:
     return metadata
 
 
+async def _apply_mirror(metadata: dict, provider) -> None:
+    """Point an in-cluster engine at the control plane's model mirror when the
+    install has no egress, so the mirror is the only source.
+
+    Only Kubernetes pods can reach the control plane; Nosana and Akash nodes
+    are on the public internet. Ollama pulls in its start script, which does
+    not take the mirror yet.
+    """
+    engine = str(metadata.get("engine") or "").lower()
+    if provider != "k8s" or engine == "ollama" or not metadata.get("model_id"):
+        return
+    if _mc_deps.egress_allowed():
+        return
+    from orchestration.config import settings
+
+    await resolve_and_apply_mirror(
+        metadata,
+        recipe=engine,
+        artifact_uri=str(metadata["model_id"]),
+        mirror_base=settings.model_mirror_base or "",
+        cache_repo=_mc_deps.get("repo"),
+        provider=provider,
+    )
+
+
 async def provision_direct_node(
     *,
     deploy_id,
@@ -244,6 +273,7 @@ async def provision_direct_node(
     provider_instance_id = None
     try:
         metadata = _build_metadata(d)
+        await _apply_mirror(metadata, provider)
 
         node_spec = await adapter.provision_node(
             provider_resource_id=pool_row["allowed_gpu_types"][0],

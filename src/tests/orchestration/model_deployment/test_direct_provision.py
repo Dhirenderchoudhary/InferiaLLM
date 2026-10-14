@@ -545,6 +545,79 @@ async def test_hf_token_flows_from_configuration_env():
     assert md.get("env", {}).get("HF_TOKEN") == "hf_x"
 
 
+class _CacheRepo:
+    def __init__(self, row):
+        self._row = row
+
+    async def get_by_key(self, *, source, model_id, revision):
+        return self._row
+
+
+def _vllm_deploy():
+    return _deploy(
+        configuration={"env": {"HF_TOKEN": "hf_x"}},
+        inference_model="Qwen/Qwen2.5-0.5B-Instruct",
+        engine="vllm",
+    )
+
+
+async def _metadata_with_mirror(
+    *, provider="k8s", deploy=None, mirror_base="http://cp:8000/api", row=None,
+    egress=False,
+):
+    from orchestration.config import settings
+
+    adapter = _make_adapter()
+    deps = _make_deps(deploy=deploy or _vllm_deploy())
+    repo = _CacheRepo(row if row is not None else {"status": "cached"})
+    with patch.object(settings, "model_mirror_base", mirror_base), \
+            patch.object(direct_provision._mc_deps, "get", return_value=repo), \
+            patch.object(direct_provision._mc_deps, "egress_allowed", return_value=egress):
+        await _run(adapter, deps, provider=provider)
+    return adapter.provision_node.await_args.kwargs["metadata"]
+
+
+@pytest.mark.asyncio
+async def test_a_kubernetes_engine_pulls_a_cached_model_through_the_mirror():
+    md = await _metadata_with_mirror()
+    assert md["env"]["HF_ENDPOINT"] == "http://cp:8000/api/hf"
+    assert md["env"]["HF_TOKEN"] == "hf_x"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["nosana", "akash"])
+async def test_a_public_node_is_never_pointed_at_the_control_plane(provider):
+    md = await _metadata_with_mirror(provider=provider)
+    assert "HF_ENDPOINT" not in md.get("env", {})
+
+
+@pytest.mark.asyncio
+async def test_a_connected_install_keeps_its_pods_on_origin():
+    # A mirror base is set on connected installs too, at an address pods
+    # may not reach.
+    md = await _metadata_with_mirror(egress=True)
+    assert "HF_ENDPOINT" not in md.get("env", {})
+
+
+@pytest.mark.asyncio
+async def test_no_mirror_base_leaves_the_pod_on_origin():
+    md = await _metadata_with_mirror(mirror_base="")
+    assert "HF_ENDPOINT" not in md.get("env", {})
+
+
+@pytest.mark.asyncio
+async def test_a_model_the_cache_does_not_have_is_left_on_origin():
+    md = await _metadata_with_mirror(row={"status": "error"})
+    assert "HF_ENDPOINT" not in md.get("env", {})
+
+
+@pytest.mark.asyncio
+async def test_ollama_on_kubernetes_keeps_its_own_pull():
+    md = await _metadata_with_mirror(deploy=_deploy(engine="ollama"))
+    assert "HF_ENDPOINT" not in md.get("env", {})
+    assert md["model_id"] == "hf://gemma3:4b"
+
+
 @pytest.mark.asyncio
 async def test_gpu_count_reaches_the_adapter():
     """gpu_per_replica is a column, not configuration. Without it the
