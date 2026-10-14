@@ -812,7 +812,9 @@ export function AutoReplicaSettings({ autoReplicaEnabled, tokensPerSecondThresho
                         className="w-4 h-4 rounded border-border bg-background text-ember-500 focus:ring-ember-500/40"
                     />
                     <label htmlFor="autoReplicaEnabled" className="text-xs font-bold text-muted-foreground uppercase tracking-tighter">
-                        Automatically provision new nodes when throughput degrades
+                        {isK8s
+                            ? "Scale replicas automatically with request load"
+                            : "Automatically provision new nodes when throughput degrades"}
                     </label>
                 </div>
                 {autoReplicaEnabled && !isK8s && (

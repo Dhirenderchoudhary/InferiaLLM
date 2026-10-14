@@ -238,6 +238,9 @@ export function CompatibilityPanel({
 
 /** Auto-replica scale-out config (inference deploys). */
 export function AutoReplicaConfig({ state, dispatch }: SectionProps) {
+  // Kubernetes scales replicas through KEDA; the tokens/sec threshold drives
+  // node provisioning, which only the other pool types do.
+  const isK8s = state.selectedPool?.provider === "k8s"
   return (
     <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
       <div className="flex items-center gap-2 mb-2">
@@ -253,10 +256,19 @@ export function AutoReplicaConfig({ state, dispatch }: SectionProps) {
           className="w-4 h-4 rounded border-border"
         />
         <label htmlFor="autoReplicaEnabled" className="text-xs font-medium text-muted-foreground">
-          Automatically provision new nodes when throughput degrades
+          {isK8s
+            ? "Scale replicas automatically with request load"
+            : "Automatically provision new nodes when throughput degrades"}
         </label>
       </div>
-      {state.autoReplicaEnabled && (
+      {state.autoReplicaEnabled && isK8s && (
+        <p className="text-xs text-muted-foreground">
+          Replicas scale on in-flight requests per replica, with p95 latency as a
+          guardrail. Platform defaults apply until you change the targets in the
+          deployment's Configuration tab.
+        </p>
+      )}
+      {state.autoReplicaEnabled && !isK8s && (
         <div>
           <label htmlFor="tokensPerSecondThreshold" className="block text-xs font-medium text-muted-foreground mb-1.5">
             Tokens/sec threshold <span className="text-muted-foreground/60">(scale out when average drops below)</span>

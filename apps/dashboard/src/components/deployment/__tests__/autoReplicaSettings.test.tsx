@@ -50,6 +50,13 @@ describe("the two autoscalers are never offered together", () => {
       expect(screen.queryByLabelText(label)).toBeNull();
     }
   });
+
+  it("the toggle on a kubernetes pool promises replicas, not new nodes", () => {
+    renderSettings({ isK8s: true });
+
+    expect(screen.getByLabelText(/scale replicas automatically/i)).toBeInTheDocument();
+    expect(screen.queryByText(/provision new nodes/i)).toBeNull();
+  });
 });
 
 describe("when auto-replica is off", () => {
