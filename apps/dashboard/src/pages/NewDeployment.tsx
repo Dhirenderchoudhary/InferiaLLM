@@ -1253,6 +1253,7 @@ function ManagedConfig({ state, dispatch, onLaunch, isPending, externalRegistry 
           engineAmis={engineAmis}
           amisLoading={amisLoading}
           amiRegion={amiRegion}
+          amiRequired={isAwsPool}
           hfTokenNames={hfTokenNames}
         />
       )}

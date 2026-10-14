@@ -358,11 +358,13 @@ export function VllmConfig({
   engineAmis,
   amisLoading,
   amiRegion,
+  amiRequired,
   hfTokenNames,
 }: SectionProps & {
   engineAmis: EngineAmi[]
   amisLoading: boolean
   amiRegion: string
+  amiRequired: boolean
   hfTokenNames: string[]
 }) {
   const {
@@ -375,8 +377,8 @@ export function VllmConfig({
     <div className="space-y-4 p-4 bg-muted/50 rounded-lg border">
       <div className="flex items-center gap-2 mb-2"><Cpu className="w-4 h-4 text-primary" /><h4 className="font-medium text-sm">{selectedEngine === "sglang" ? "SGLang" : "vLLM"} Configuration</h4></div>
 
-      {/* Engine AMI dropdown (required for vLLM only) */}
-      {selectedEngine === "vllm" && (
+      {/* Engine AMI dropdown: vLLM on an AWS pool only */}
+      {amiRequired && (
         <EngineAmiSelect
           selectedAmiId={selectedAmiId}
           dispatch={dispatch}
