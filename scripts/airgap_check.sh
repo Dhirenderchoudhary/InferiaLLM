@@ -11,7 +11,8 @@
 # Stage 1-ollama (no GPU): a real ollama client on that network pulls a cached
 # model from the /v2 mirror and answers a prompt on CPU.
 #
-# Stage 2 (needs a GPU): vLLM on the same network loads that model.
+# Stage 2 (needs a GPU): vLLM on the same network loads a real imported model,
+# such as Qwen/Qwen2.5-0.5B-Instruct, and answers a completion.
 #
 #   ./scripts/airgap_check.sh stage1
 #   ./scripts/airgap_check.sh stage1-ollama
@@ -27,6 +28,9 @@ IMAGE=$(docker inspect "$APP" --format '{{.Config.Image}}')
 OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2:0.5b}
 OLLAMA_IMAGE=${OLLAMA_IMAGE:-ollama/ollama:latest}
 OLLAMA_C=airgap-ollama
+VLLM_IMAGE=${VLLM_IMAGE:-docker.io/vllm/vllm-openai:v0.22.1}
+VLLM_C=airgap-vllm
+VLLM_TIMEOUT=${VLLM_TIMEOUT:-900}
 
 note() { printf '\n== %s\n' "$1"; }
 fail() { printf 'FAIL  %s\n' "$1"; exit 1; }
@@ -119,7 +123,7 @@ print('PASS  snapshot_download, weights byte-exact')
 " || fail "the offline client could not fetch the model"
 
   note "stage 1 complete — the mirror serves with no internet"
-  echo "next: ./scripts/airgap_check.sh stage2 $MODEL   (needs a GPU host)"
+  echo "next: import a real model, then ./scripts/airgap_check.sh stage2 <model-id>   (needs a GPU host)"
 }
 
 stage1_ollama() {
@@ -174,19 +178,74 @@ stage1_ollama() {
   echo "run ./scripts/airgap_check.sh clean to remove the container and network"
 }
 
+vllm_logs_and_fail() {
+  docker logs --tail 30 "$VLLM_C" 2>&1 | sed 's/^/    /'
+  docker rm -f "$VLLM_C" >/dev/null 2>&1 || true
+  fail "$1"
+}
+
 stage2() {
-  local model=${1:-$MODEL}
+  local model=${1:-}
+  [ -n "$model" ] || fail "usage: $0 stage2 <model-id>   (import it first)"
+  docker image inspect "$VLLM_IMAGE" >/dev/null 2>&1 \
+    || fail "pull $VLLM_IMAGE on the host first (the test network has no internet)"
+  need_egress_off
+  ensure_net
+
   note "vLLM on the isolated network, weights from the mirror only"
-  docker run --rm --gpus all --network "$NET" \
+  docker rm -f "$VLLM_C" >/dev/null 2>&1 || true
+  local started=$(date +%s)
+  # Detached: the server never exits; a foreground run could only fail.
+  docker run -d --name "$VLLM_C" --gpus all --network "$NET" \
     -e HF_ENDPOINT="http://$APP:8000/api/hf" \
-    -e HF_HUB_OFFLINE=0 \
-    docker.io/vllm/vllm-openai:v0.22.1 \
-    --model "$model" --max-model-len 512 --enforce-eager \
-    || fail "vLLM could not start from the mirror"
+    "$VLLM_IMAGE" \
+    --model "$model" --max-model-len 512 --enforce-eager >/dev/null
+
+  for _ in $(seq 1 30); do
+    [ "$(docker inspect "$VLLM_C" --format '{{.State.Running}}' 2>/dev/null)" = "true" ] \
+      && break
+    sleep 1
+  done
+  # A check that merely failed to run would otherwise read as "unreachable".
+  probe=$(docker exec "$VLLM_C" bash -c \
+    'timeout 5 bash -c "echo > /dev/tcp/huggingface.co/443" && echo reached || echo blocked' \
+    2>/dev/null)
+  [ "$probe" = "blocked" ] \
+    || vllm_logs_and_fail "egress check in $VLLM_C said: ${probe:-could not run}"
+  pass "huggingface.co is unreachable"
+
+  note "waiting for the weights to arrive through the mirror"
+  local ready=""
+  for _ in $(seq 1 "$VLLM_TIMEOUT"); do
+    docker exec "$VLLM_C" python3 -c \
+      'import urllib.request as u; u.urlopen("http://127.0.0.1:8000/v1/models", timeout=2)' \
+      2>/dev/null && { ready=1; break; }
+    [ "$(docker inspect "$VLLM_C" --format '{{.State.Running}}' 2>/dev/null)" = "true" ] \
+      || vllm_logs_and_fail "vLLM exited before it served"
+    sleep 1
+  done
+  [ -n "$ready" ] || vllm_logs_and_fail "vLLM did not serve within ${VLLM_TIMEOUT}s"
+  printf 'PASS  served in %ss (transfer plus load)\n' "$(( $(date +%s) - started ))"
+
+  note "and answers a completion"
+  local out
+  out=$(docker exec "$VLLM_C" python3 -c "
+import json, urllib.request
+b = json.dumps({'model': '$model', 'prompt': 'Reply with one word: ok',
+                'max_tokens': 8}).encode()
+r = urllib.request.Request('http://127.0.0.1:8000/v1/completions', b,
+                           {'Content-Type': 'application/json'})
+print(json.load(urllib.request.urlopen(r, timeout=180))['choices'][0]['text'])
+" 2>/dev/null)
+  printf '%s' "$out" | grep -q '[A-Za-z]' || vllm_logs_and_fail "no completion came back"
+  printf 'PASS  completion: %s\n' "$(printf '%s' "$out" | tr -d '\r\n' | head -c 60)"
+
+  docker rm -f "$VLLM_C" >/dev/null 2>&1 || true
+  note "stage 2 complete — vLLM ran with no internet"
 }
 
 clean() {
-  docker rm -f "$OLLAMA_C" >/dev/null 2>&1 || true
+  docker rm -f "$OLLAMA_C" "$VLLM_C" >/dev/null 2>&1 || true
   docker exec "$APP" sh -c "rm -rf $STAGE_DIR" 2>/dev/null || true
   docker network disconnect "$NET" "$APP" 2>/dev/null || true
   docker network rm "$NET" 2>/dev/null || true
