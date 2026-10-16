@@ -11,7 +11,8 @@
 # Stage 1-ollama (no GPU): a real ollama client on that network pulls a cached
 # model from the /v2 mirror and answers a prompt on CPU.
 #
-# Stage 2 (needs a GPU): vLLM on the same network loads that model.
+# Stage 2 (needs a GPU): vLLM on the same network loads a real imported model,
+# such as Qwen/Qwen2.5-0.5B-Instruct, and answers a completion.
 #
 #   ./scripts/airgap_check.sh stage1
 #   ./scripts/airgap_check.sh stage1-ollama
@@ -122,7 +123,7 @@ print('PASS  snapshot_download, weights byte-exact')
 " || fail "the offline client could not fetch the model"
 
   note "stage 1 complete — the mirror serves with no internet"
-  echo "next: ./scripts/airgap_check.sh stage2 $MODEL   (needs a GPU host)"
+  echo "next: import a real model, then ./scripts/airgap_check.sh stage2 <model-id>   (needs a GPU host)"
 }
 
 stage1_ollama() {
