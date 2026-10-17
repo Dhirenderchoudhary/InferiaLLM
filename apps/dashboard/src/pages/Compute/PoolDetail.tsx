@@ -62,6 +62,7 @@ function PoolDetailContent() {
   const location = useLocation();
   const { hasPermission } = useAuth();
   const canDelete = hasPermission("deployment:delete");
+  const canShell = hasPermission("node:shell");
 
   // A pool is created and then linked straight to /pools/:id/workers, so the
   // tab has to survive a deep link rather than always opening on Overview.
@@ -374,6 +375,7 @@ function PoolDetailContent() {
               nodes={nodes}
               poolId={id ?? ""}
               canDelete={canDelete}
+              canShell={canShell}
               onRefetch={fetchNodes}
             />
           </div>
@@ -652,11 +654,13 @@ function NodeList({
   nodes,
   poolId,
   canDelete,
+  canShell,
   onRefetch,
 }: {
   nodes: NodeView[];
   poolId: string;
   canDelete: boolean;
+  canShell: boolean;
   onRefetch: () => void | Promise<void>;
 }) {
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -763,13 +767,15 @@ function NodeList({
                     >
                       <Activity className="w-3.5 h-3.5" /> Status
                     </Link>
-                    <Link
-                      to={`${detailBase}/shell`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-                    >
-                      <Terminal className="w-3.5 h-3.5" /> Shell
-                    </Link>
+                    {canShell && (
+                      <Link
+                        to={`${detailBase}/shell`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        <Terminal className="w-3.5 h-3.5" /> Shell
+                      </Link>
+                    )}
                     <Link
                       to={`${detailBase}/logs`}
                       onClick={(e) => e.stopPropagation()}

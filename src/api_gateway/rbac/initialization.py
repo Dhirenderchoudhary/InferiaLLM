@@ -12,6 +12,22 @@ from api_gateway.rbac.permissions import (
 
 logger = logging.getLogger(__name__)
 
+# Default dashboard operator permissions. Admins get every permission.
+MEMBER_PERMISSIONS = [
+    PermissionEnum.DEPLOYMENT_LIST.value,
+    PermissionEnum.DEPLOYMENT_CREATE.value,
+    PermissionEnum.DEPLOYMENT_UPDATE.value,
+    PermissionEnum.DEPLOYMENT_DELETE.value,
+    PermissionEnum.MODEL_ACCESS.value,
+    PermissionEnum.API_KEY_LIST.value,
+    PermissionEnum.API_KEY_CREATE.value,
+    PermissionEnum.API_KEY_REVOKE.value,
+    PermissionEnum.ORG_VIEW.value,
+    PermissionEnum.MODEL_LIST.value,
+    PermissionEnum.MODEL_ADD.value,
+    PermissionEnum.MODEL_DELETE.value,
+]
+
 async def initialize_default_org(db: AsyncSession):
     """
     Initialize the default organization, roles, permissions, and superadmin if they don't exist.
@@ -36,20 +52,7 @@ async def initialize_default_org(db: AsyncSession):
             db.add(admin_role)
 
         # Member Role: Default dashboard operator permissions
-        member_permissions = [
-            PermissionEnum.DEPLOYMENT_LIST.value,
-            PermissionEnum.DEPLOYMENT_CREATE.value,
-            PermissionEnum.DEPLOYMENT_UPDATE.value,
-            PermissionEnum.DEPLOYMENT_DELETE.value,
-            PermissionEnum.MODEL_ACCESS.value,
-            PermissionEnum.API_KEY_LIST.value,
-            PermissionEnum.API_KEY_CREATE.value,
-            PermissionEnum.API_KEY_REVOKE.value,
-            PermissionEnum.ORG_VIEW.value,
-            PermissionEnum.MODEL_LIST.value,
-            PermissionEnum.MODEL_ADD.value,
-            PermissionEnum.MODEL_DELETE.value,
-        ]
+        member_permissions = list(MEMBER_PERMISSIONS)
         
         member_role_stmt = select(Role).where(Role.name == "member")
         member_role_res = await db.execute(member_role_stmt)

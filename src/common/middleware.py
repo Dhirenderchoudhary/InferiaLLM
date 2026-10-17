@@ -66,12 +66,8 @@ def create_internal_auth_middleware(
                     response.headers["X-Request-ID"] = request_id
                 return response
 
-            # WebSocket handshake check - browsers can't set custom headers for WS
-            upgrade_header = request.headers.get("upgrade", "").lower()
-            if upgrade_header == "websocket":
-                logger.info(f"Allowing WebSocket handshake for {path}")
-                response = await call_next(request)
-                return response
+            # No Upgrade-header exemption: an HTTP middleware never sees a real
+            # handshake, so only a hand-set header could reach one.
 
             # 3. Only check if path prefix matches (if provided)
             if check_path_prefix and not path.startswith(check_path_prefix):

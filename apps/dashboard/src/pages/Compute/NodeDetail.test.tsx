@@ -285,6 +285,25 @@ describe("NodeDetail", () => {
     });
   });
 
+  // A shell on a worker is a root shell, so it needs node:shell, not just
+  // the deployment permissions every member holds.
+  it("hides the Shell tab and redirects a deep link without node:shell", async () => {
+    const authCtx = await import("@/context/AuthContext");
+    (authCtx.useAuth as ReturnType<typeof vi.fn>).mockReturnValue({
+      hasPermission: (p: string) => p !== "node:shell",
+      user: { user_id: "u1", username: "test", permissions: [] },
+      organizations: [],
+    });
+
+    renderNodeDetail("/dashboard/compute/pools/p1/nodes/n1/shell");
+
+    await waitFor(() => {
+      expect(screen.getAllByText("worker-1").length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByText("Shell")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("node-shell-stub")).not.toBeInTheDocument();
+  });
+
   // ── Logs tab ──────────────────────────────────────────────────────────────
   it("shows NodeLogs stub on logs tab", async () => {
     const user = userEvent.setup();

@@ -287,6 +287,34 @@ describe("PoolDetail", () => {
     expect(screen.queryByTestId("delete-node-node-abc")).not.toBeInTheDocument();
   });
 
+  // A shell on a worker is a root shell, so only node:shell holders see it.
+  it.each([
+    [true, true],
+    [false, false],
+  ])("shows the per-row Shell link only with node:shell (has it: %s)", async (granted, shown) => {
+    const authCtx = await import("@/context/AuthContext");
+    (authCtx.useAuth as ReturnType<typeof vi.fn>).mockReturnValue({
+      hasPermission: (p: string) => (p === "node:shell" ? granted : true),
+      user: { org_id: "org-1", user_id: "u1", username: "test", permissions: [] },
+      organizations: [],
+    });
+
+    const user = userEvent.setup();
+    const nodeService = await import("@/services/nodeService");
+    (nodeService.listNodes as ReturnType<typeof vi.fn>).mockResolvedValue([MOCK_NODE]);
+
+    renderPoolDetail();
+    await waitForPoolLoad();
+    await user.click(screen.getByRole("button", { name: "Nodes" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("worker-1")).toBeInTheDocument();
+    });
+    const link = screen.queryByRole("link", { name: /shell/i });
+    if (shown) expect(link).toBeInTheDocument();
+    else expect(link).not.toBeInTheDocument();
+  });
+
   // ── Per-row Delete: confirm true → deleteNode called + node list refetched ─
   it("calls deleteNode then refetches the node list on a confirmed row delete", async () => {
     const user = userEvent.setup();

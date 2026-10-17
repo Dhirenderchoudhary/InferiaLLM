@@ -138,6 +138,49 @@ class TestFailClosedWhenKeyNotConfigured:
         asyncio.run(_run())
 
 
+class TestUpgradeHeaderCannotBypass:
+    """An Upgrade header is client-supplied and must not exempt anything.
+
+    A real handshake arrives on the websocket scope and never reaches an HTTP
+    middleware, so a request that does carry the header here is a plain one.
+    """
+
+    GOOD = "valid-key-32chars-aaaaaaaaaaaaaaaa"
+
+    def _get(self, headers):
+        app = _make_test_app(internal_api_key=self.GOOD)
+
+        async def _run():
+            async with AsyncClient(
+                transport=ASGITransport(app=app, raise_app_exceptions=False),
+                base_url="http://test",
+            ) as client:
+                return await client.get("/internal/secret", headers=headers)
+
+        return asyncio.run(_run())
+
+    def test_upgrade_header_alone_does_not_grant_access(self):
+        assert self._get({"Upgrade": "websocket"}).status_code == 401
+
+    def test_upgrade_header_is_not_case_sensitive_either(self):
+        assert self._get({"Upgrade": "WebSocket"}).status_code == 401
+
+    def test_upgrade_header_does_not_rescue_a_wrong_key(self):
+        resp = self._get(
+            {"Upgrade": "websocket", "X-Internal-API-Key": "wrong-key"},
+        )
+        assert resp.status_code == 403
+
+    def test_a_valid_key_still_works_with_the_header_present(self):
+        resp = self._get(
+            {
+                "Upgrade": "websocket",
+                "X-Internal-API-Key": self.GOOD,
+            },
+        )
+        assert resp.status_code == 200
+
+
 class TestInternalKeyValidation:
     """Verify correct API key validation behavior."""
 

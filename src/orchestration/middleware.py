@@ -5,22 +5,42 @@ from orchestration.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Paths that bypass the internal key. Each one is health or discovery, or
+# authenticates its caller itself (workers carry their own token).
+INTERNAL_AUTH_SKIP_PATHS = [
+    "/health",
+    "/v1/workers/register",
+    "/v1/workers/channel",
+    "/v3/discovery:clusters",
+    "/v3/discovery:endpoints",
+    "/v3/healthz",
+    "/v3/route-table",
+    "/v3/debug/resources",
+]
+
 class InternalAuthMiddleware:
     def __init__(self, app, internal_api_key: str, skip_paths: list = None):
         self.app = app
         self.internal_api_key = internal_api_key
         self.skip_paths = [p.rstrip("/") for p in (skip_paths or [])]
 
+    async def _reject(self, scope, receive, send, status_code: int, detail: str):
+        """Refuse a request in the shape its protocol expects."""
+        if scope["type"] == "websocket":
+            # Sent before any accept, so the handshake itself fails.
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        response = JSONResponse(status_code=status_code, content={"detail": detail})
+        await response(scope, receive, send)
+
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http" and scope["type"] != "websocket":
             await self.app(scope, receive, send)
             return
 
-        # 1. Skip validation for WebSockets (browsers can't send headers)
-        if scope["type"] == "websocket":
-            await self.app(scope, receive, send)
-            return
-
+        # WebSockets are checked like anything else. A browser cannot set the
+        # header, but a browser never reaches this port: the gateway mints its
+        # own upstream connection and does send it.
         path = scope.get("path", "")
         norm_path = path.rstrip("/") if path != "/" else path
 
@@ -37,20 +57,18 @@ class InternalAuthMiddleware:
 
         if not api_key:
             logger.warning(f"Unauthorized access attempt to {path}: Missing API Key")
-            response = JSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                content={"detail": "Missing X-Internal-API-Key header"},
+            await self._reject(
+                scope, receive, send, status.HTTP_401_UNAUTHORIZED,
+                "Missing X-Internal-API-Key header",
             )
-            await response(scope, receive, send)
             return
 
         if api_key != self.internal_api_key:
             logger.warning(f"Unauthorized access attempt to {path}: Invalid API Key")
-            response = JSONResponse(
-                status_code=status.HTTP_403_FORBIDDEN,
-                content={"detail": "Invalid internal API key"},
+            await self._reject(
+                scope, receive, send, status.HTTP_403_FORBIDDEN,
+                "Invalid internal API key",
             )
-            await response(scope, receive, send)
             return
 
         await self.app(scope, receive, send)
@@ -60,5 +78,5 @@ def internal_auth_middleware_factory(app):
     return InternalAuthMiddleware(
         app, 
         internal_api_key=settings.internal_api_key, 
-        skip_paths=["/health", "/deployment/ws"]
+        skip_paths=["/health"]
     )

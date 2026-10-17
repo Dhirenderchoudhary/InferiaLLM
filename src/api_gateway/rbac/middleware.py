@@ -246,12 +246,8 @@ async def auth_middleware(request: Request, call_next):
       - oidc:        try local (superadmin recovery), fall back to _resolve_oidc_token
       - local:       _resolve_local_token only
     """
-    # Skip auth for WebSocket connections - they handle auth differently (via query params)
-    # Check both 'upgrade' header and the connection type
-    upgrade_header = request.headers.get("upgrade", "").lower()
-    connection_header = request.headers.get("connection", "").lower()
-    if upgrade_header == "websocket" or "upgrade" in connection_header:
-        return await call_next(request)
+    # No Upgrade/Connection exemption: an HTTP middleware never sees a real
+    # handshake, so only a hand-set header could reach one.
 
     # Path relative to the ASGI root_path. Under the unified app the gateway is
     # mounted at /api, so Starlette sets scope['root_path']='/api' but does NOT

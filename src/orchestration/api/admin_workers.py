@@ -448,6 +448,28 @@ async def _run_until_either(*coros) -> None:
         logger.warning("_run_until_either crashed: %s", e)
 
 
+async def _node_in_caller_org(ws: WebSocket, node_id: str) -> bool:
+    """Whether the node sits in a pool owned by the caller's organisation.
+
+    The gateway checks the user's permission, not which nodes it covers, so a
+    node id from another organisation must be refused here.
+    """
+    org_id = ws.headers.get("x-organization-id") or ""
+    if not org_id or _deps.inventory_repo is None or _deps.pool_repo is None:
+        return False
+    try:
+        node = await _deps.inventory_repo.get_node_by_id(node_id)
+        pool = await _deps.pool_repo.get(node["pool_id"]) if node else None
+    except Exception as e:
+        logger.warning("org check for node %s failed: %s", node_id, e)
+        return False
+    return (
+        pool is not None
+        and pool["owner_type"] == "organization"
+        and str(pool["owner_id"]) == org_id
+    )
+
+
 @router.websocket("/{node_id}/logs")
 async def proxy_worker_logs(ws: WebSocket, node_id: str):
     """Multiplex a live container logs stream over the worker's control WS.
@@ -456,6 +478,9 @@ async def proxy_worker_logs(ws: WebSocket, node_id: str):
     bodies into the dashboard wire format, and tears the stream down on
     either side disconnect.
     """
+    if not await _node_in_caller_org(ws, node_id):
+        await ws.close(code=1008)
+        return
     await ws.accept()
 
     stream_id = str(uuid.uuid4())
@@ -536,6 +561,9 @@ async def proxy_worker_shell(ws: WebSocket, node_id: str):
     and the worker's ShellOutput / ShellExit / ShellError frames back into
     the dashboard wire format.
     """
+    if not await _node_in_caller_org(ws, node_id):
+        await ws.close(code=1008)
+        return
     await ws.accept()
 
     # DePIN nodes (Nosana/Akash) run the model in a confidential, externally
