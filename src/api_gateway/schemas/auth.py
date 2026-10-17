@@ -42,6 +42,9 @@ class PermissionEnum(str, Enum):
     ORG_VIEW = "organization:view"
     ORG_UPDATE = "organization:update"
 
+    # Nodes. A root shell on a worker, so not in the default member role.
+    NODE_SHELL = "node:shell"
+
 
 class OrganizationBasicInfo(BaseModel):
     id: str

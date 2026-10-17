@@ -574,11 +574,11 @@ async def proxy_admin_workers_logs(websocket: WebSocket, node_id: str):
 async def proxy_admin_workers_shell(websocket: WebSocket, node_id: str):
     """Proxy interactive shell WS to the dashboard.
 
-    Same auth pattern as /logs but requires DEPLOYMENT_UPDATE — a shell
-    can mutate the running container, so we gate it more tightly.
+    Same auth pattern as /logs but requires NODE_SHELL: a root shell on the
+    worker, which the default member role does not carry.
     """
     await _proxy_admin_workers_ws(websocket, node_id, subpath="shell",
-                                   permission=PermissionEnum.DEPLOYMENT_UPDATE)
+                                   permission=PermissionEnum.NODE_SHELL)
 
 
 async def _proxy_admin_workers_ws(websocket: WebSocket, node_id: str, *, subpath: str, permission):

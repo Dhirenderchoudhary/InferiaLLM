@@ -37,6 +37,7 @@ export default function NodeDetail() {
   const { hasPermission } = useAuth();
   const canRetry = hasPermission("deployment:create");
   const canDelete = hasPermission("deployment:delete");
+  const canShell = hasPermission("node:shell");
 
   const [node, setNode] = useState<NodeView | null>(null);
   const [summary, setSummary] = useState<ProvisioningSummary | null>(null);
@@ -188,7 +189,7 @@ export default function NodeDetail() {
     { label: "Instance Details", value: "instance-details", hidden: !isNosana },
     { label: "EC2 Details", value: "ec2", hidden: !isAws },
     { label: "Metrics", value: "metrics" },
-    { label: "Shell", value: "shell", hidden: isDepin },
+    { label: "Shell", value: "shell", hidden: isDepin || !canShell },
     { label: "Logs", value: "logs" },
   ];
 
@@ -377,14 +378,18 @@ export default function NodeDetail() {
         <Route
           path="shell"
           element={
-            <NodeTabLayout tabs={tabs} activeTab="shell" poolId={poolId} nid={nid}>
-              <NodeShell
-                nodeId={node.id}
-                nodeProvider={node.provider ?? undefined}
-                nodeState={node.state}
-                currentPhase={summary?.current_phase}
-              />
-            </NodeTabLayout>
+            canShell ? (
+              <NodeTabLayout tabs={tabs} activeTab="shell" poolId={poolId} nid={nid}>
+                <NodeShell
+                  nodeId={node.id}
+                  nodeProvider={node.provider ?? undefined}
+                  nodeState={node.state}
+                  currentPhase={summary?.current_phase}
+                />
+              </NodeTabLayout>
+            ) : (
+              <Navigate to="../provisioning" replace />
+            )
           }
         />
 

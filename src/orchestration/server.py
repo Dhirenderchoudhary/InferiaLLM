@@ -110,7 +110,7 @@ from orchestration.repositories.inventory_repo import (
 )
 
 from orchestration.infra.redis_event_bus import RedisEventBus
-from orchestration.middleware import InternalAuthMiddleware
+from orchestration.middleware import INTERNAL_AUTH_SKIP_PATHS, InternalAuthMiddleware
 from orchestration.grpc_auth_interceptor import (
     InternalAPIKeyInterceptor,
 )
@@ -442,17 +442,7 @@ async def serve():
     app.add_middleware(
         InternalAuthMiddleware,
         internal_api_key=settings.internal_api_key,
-        skip_paths=[
-            "/health",
-            "/deployment/ws",
-            "/v1/workers/register",
-            "/v1/workers/channel",
-            "/v3/discovery:clusters",
-            "/v3/discovery:endpoints",
-            "/v3/healthz",
-            "/v3/route-table",
-            "/v3/debug/resources",
-        ],
+        skip_paths=INTERNAL_AUTH_SKIP_PATHS,
     )
 
     # Register standard exception handlers

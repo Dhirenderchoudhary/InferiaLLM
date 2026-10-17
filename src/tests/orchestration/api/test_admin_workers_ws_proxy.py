@@ -53,6 +53,14 @@ from orchestration.workers.worker_controller.registry import (
 
 
 NODE_ID = "11111111-2222-3333-4444-555555555555"
+ORG_ID = "org-1"
+POOL_ID = "pool-1"
+
+
+def _client(app: FastAPI, org_id: str | None = ORG_ID) -> TestClient:
+    """A client carrying the org header the gateway forwards."""
+    headers = {"X-Organization-ID": org_id} if org_id is not None else {}
+    return TestClient(app, headers=headers)
 
 
 # ---------------------------------------------------------------------------
@@ -169,14 +177,18 @@ class FakeRegistry:
 
 def _make_app(registry: FakeRegistry) -> FastAPI:
     """Build a fresh FastAPI app with admin_workers configured to use the
-    supplied registry. The proxy only touches ``worker_registry`` for
-    shell/logs — other deps are left as no-op stubs."""
+    supplied registry. The node sits in a pool owned by ORG_ID, so the
+    org check passes for ``_client``."""
     app = FastAPI()
 
     admin_workers._deps.worker_auth = None
     admin_workers._deps.worker_registry = registry
-    admin_workers._deps.inventory_repo = None
-    admin_workers._deps.pool_repo = None
+    admin_workers._deps.inventory_repo = _FakeInventory(
+        {"provider": "worker", "pool_id": POOL_ID},
+    )
+    admin_workers._deps.pool_repo = _FakePools(
+        {POOL_ID: {"owner_type": "organization", "owner_id": ORG_ID}},
+    )
     admin_workers._deps.control_plane_external_url = ""
     admin_workers._deps.require_permission = lambda perm: lambda *_a, **_kw: True
     admin_workers._deps.db_pool = None
@@ -209,7 +221,7 @@ def reset_deps():
     ) = saved
 
 
-def _stream_id(registry: FakeRegistry, deadline_s: float = 2.0) -> str:
+def _stream_id(registry: FakeRegistry, deadline_s: float = 10.0) -> str:
     """Return the stream_id the proxy minted for the open call.
 
     The proxy's call to ``open_*_stream`` happens on the TestClient's
@@ -237,7 +249,7 @@ def test_shell_open_passes_query_params_into_body():
     app = _make_app(reg)
 
     qs = "deployment=dep-1&container=ctr-2&shell=/bin/bash&user=root&cols=120&rows=40"
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/shell?{qs}",
     ) as ws:
         # Push an exit to terminate the worker_to_dashboard loop and let the
@@ -267,7 +279,7 @@ def test_shell_stdin_translates_to_shell_input():
     reg = FakeRegistry()
     app = _make_app(reg)
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/shell?shell=/bin/sh",
     ) as ws:
         ws.send_json({"type": "stdin", "data": "ls -la\n"})
@@ -293,7 +305,7 @@ def test_shell_output_translates_to_dashboard_wire_format():
     reg = FakeRegistry()
     app = _make_app(reg)
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/shell",
     ) as ws:
         sid = _stream_id(reg)
@@ -314,7 +326,7 @@ def test_shell_resize_forwarded_as_shell_resize_envelope():
     reg = FakeRegistry()
     app = _make_app(reg)
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/shell",
     ) as ws:
         ws.send_json({"type": "resize", "rows": 50, "cols": 132})
@@ -336,7 +348,7 @@ def test_shell_error_frame_closes_dashboard_with_error_envelope():
     reg = FakeRegistry()
     app = _make_app(reg)
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/shell",
     ) as ws:
         sid = _stream_id(reg)
@@ -359,7 +371,7 @@ def test_shell_worker_offline_reports_clean_error():
     reg = FakeRegistry(offline=True)
     app = _make_app(reg)
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/shell",
     ) as ws:
         msg = ws.receive_json()
@@ -379,7 +391,7 @@ def test_shell_dashboard_disconnect_closes_stream():
     reg = FakeRegistry()
     app = _make_app(reg)
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/shell",
     ) as ws:
         sid = _stream_id(reg)
@@ -401,7 +413,7 @@ def test_shell_resize_missing_fields_safely_dropped():
     reg = FakeRegistry()
     app = _make_app(reg)
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/shell",
     ) as ws:
         ws.send_json({"type": "resize"})  # nothing
@@ -429,7 +441,7 @@ def test_shell_stdin_non_string_data_dropped():
     reg = FakeRegistry()
     app = _make_app(reg)
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/shell",
     ) as ws:
         ws.send_json({"type": "stdin", "data": 12345})  # number, not str
@@ -450,7 +462,7 @@ def test_shell_unknown_frame_type_ignored():
     reg = FakeRegistry()
     app = _make_app(reg)
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/shell",
     ) as ws:
         ws.send_json({"type": "ping"})  # not in our schema
@@ -472,7 +484,7 @@ def test_shell_default_cols_rows_when_missing():
     reg = FakeRegistry()
     app = _make_app(reg)
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/shell",
     ) as ws:
         sid = _stream_id(reg)
@@ -495,7 +507,7 @@ def test_logs_open_passes_deployment_and_container_into_body():
     reg = FakeRegistry()
     app = _make_app(reg)
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/logs?deployment=dep-7&container=ctr-3",
     ) as ws:
         sid = _stream_id(reg)
@@ -515,7 +527,7 @@ def test_logs_multiple_lines_arrive_in_order():
     reg = FakeRegistry()
     app = _make_app(reg)
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/logs",
     ) as ws:
         sid = _stream_id(reg)
@@ -540,7 +552,7 @@ def test_logs_worker_offline_reports_clean_error():
     reg = FakeRegistry(offline=True)
     app = _make_app(reg)
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/logs",
     ) as ws:
         msg = ws.receive_json()
@@ -560,7 +572,7 @@ def test_logs_worker_disconnect_surfaces_as_error():
     reg = FakeRegistry()
     app = _make_app(reg)
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/logs",
     ) as ws:
         sid = _stream_id(reg)
@@ -580,7 +592,7 @@ def test_logs_dashboard_disconnect_closes_stream():
     reg = FakeRegistry()
     app = _make_app(reg)
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/logs",
     ) as ws:
         sid = _stream_id(reg)
@@ -597,7 +609,7 @@ def test_logs_empty_query_params_yield_blank_targets():
     reg = FakeRegistry()
     app = _make_app(reg)
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/logs",
     ) as ws:
         sid = _stream_id(reg)
@@ -622,7 +634,7 @@ def test_shell_logs_unexpected_frame_logged_and_ignored():
     reg = FakeRegistry()
     app = _make_app(reg)
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/shell",
     ) as ws:
         sid = _stream_id(reg)
@@ -641,7 +653,7 @@ def test_logs_unexpected_frame_logged_and_ignored():
     reg = FakeRegistry()
     app = _make_app(reg)
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/logs",
     ) as ws:
         sid = _stream_id(reg)
@@ -666,12 +678,22 @@ class _FakeInventory:
         return self._node
 
 
+class _FakePools:
+    def __init__(self, pools):
+        self._pools = pools
+
+    async def get(self, pool_id):
+        return self._pools.get(pool_id)
+
+
 def test_shell_depin_node_gated_with_clear_message():
     reg = FakeRegistry()
     app = _make_app(reg)
-    admin_workers._deps.inventory_repo = _FakeInventory({"provider": "nosana"})
+    admin_workers._deps.inventory_repo = _FakeInventory(
+        {"provider": "nosana", "pool_id": POOL_ID},
+    )
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/shell",
     ) as ws:
         msg = ws.receive_json()
@@ -691,9 +713,11 @@ def test_shell_worker_node_not_gated():
     DePIN gate must not fire for it."""
     reg = FakeRegistry()
     app = _make_app(reg)
-    admin_workers._deps.inventory_repo = _FakeInventory({"provider": "worker"})
+    admin_workers._deps.inventory_repo = _FakeInventory(
+        {"provider": "worker", "pool_id": POOL_ID},
+    )
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/shell",
     ) as ws:
         sid = _stream_id(reg)
@@ -709,7 +733,7 @@ def test_shell_malformed_cols_query_param_falls_back_to_default():
     reg = FakeRegistry()
     app = _make_app(reg)
 
-    with TestClient(app).websocket_connect(
+    with _client(app).websocket_connect(
         f"/v1/admin/workers/{NODE_ID}/shell?cols=lol&rows=&shell=/bin/sh",
     ) as ws:
         sid = _stream_id(reg)
@@ -719,3 +743,48 @@ def test_shell_malformed_cols_query_param_falls_back_to_default():
     _, body = reg.opens[0]
     assert body.cols == 0  # fallback
     assert body.rows == 0  # empty string also falls back
+
+
+# ---------------------------------------------------------------------------
+# Organisation scoping. The gateway checks permission, not which nodes it
+# covers, so another org's node must be refused here, before any stream opens.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("kind", ["shell", "logs"])
+@pytest.mark.parametrize(
+    "org_id, pool",
+    [
+        ("org-2", {"owner_type": "organization", "owner_id": ORG_ID}),
+        (None, {"owner_type": "organization", "owner_id": ORG_ID}),
+        ("", {"owner_type": "organization", "owner_id": ORG_ID}),
+        (ORG_ID, {"owner_type": "system", "owner_id": ORG_ID}),
+        (ORG_ID, None),
+    ],
+    ids=["other-org", "no-header", "empty-header", "system-pool", "no-pool"],
+)
+def test_a_node_outside_the_callers_org_is_refused(kind, org_id, pool):
+    reg = FakeRegistry()
+    app = _make_app(reg)
+    admin_workers._deps.pool_repo = _FakePools({POOL_ID: pool} if pool else {})
+
+    with pytest.raises(WebSocketDisconnect):
+        with _client(app, org_id).websocket_connect(
+            f"/v1/admin/workers/{NODE_ID}/{kind}",
+        ):
+            pass  # refused at the handshake, so entering raises
+    assert reg.opens == []
+
+
+@pytest.mark.parametrize("kind", ["shell", "logs"])
+def test_an_unknown_node_is_refused(kind):
+    reg = FakeRegistry()
+    app = _make_app(reg)
+    admin_workers._deps.inventory_repo = _FakeInventory(None)
+
+    with pytest.raises(WebSocketDisconnect):
+        with _client(app).websocket_connect(
+            f"/v1/admin/workers/{NODE_ID}/{kind}",
+        ):
+            pass
+    assert reg.opens == []

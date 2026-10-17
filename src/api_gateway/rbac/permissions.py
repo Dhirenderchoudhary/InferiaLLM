@@ -60,7 +60,11 @@ CATALOG_PERMISSION_MAP: dict = {
         PermissionEnum.ROLE_DELETE.value,
     ),
     "inferiallm:org:read": (PermissionEnum.ORG_VIEW.value,),
-    "inferiallm:org:write": (PermissionEnum.ORG_UPDATE.value,),
+    # node:shell sits here because only the admin role holds org:write.
+    "inferiallm:org:write": (
+        PermissionEnum.ORG_UPDATE.value,
+        PermissionEnum.NODE_SHELL.value,
+    ),
     "inferiallm:audit:read": (PermissionEnum.AUDIT_LOG_LIST.value,),
 }
 
