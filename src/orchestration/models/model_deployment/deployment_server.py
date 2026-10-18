@@ -34,7 +34,7 @@ from orchestration.provisioning.engine.registry import (
     _deprovision_direct_node,
 )
 from orchestration.provisioning.engine.base import AdapterType
-from orchestration.ownership import caller_org, owns
+from orchestration.ownership import caller_org, owns, owns_pool
 from orchestration.models.model_deployment.model_ref import (
     resolve_artifact_uri,
 )
@@ -863,7 +863,7 @@ async def _lookup_org_id(resource_type: str, resource_id: str) -> str | None:
                 "SELECT owner_type, owner_id FROM compute_pools WHERE id = $1",
                 UUID(resource_id),
             )
-            if row and row["owner_type"] == "org":
+            if row and row["owner_type"] in ("organization", "user"):
                 return row["owner_id"]
     except Exception as e:
         logger.warning(f"Failed to look up org_id for {resource_type}/{resource_id}: {e}")
@@ -1676,6 +1676,15 @@ async def deploy_model(req: DeployModelRequest, request: Request):
          worker-pools, return. Otherwise enqueue ProvisioningJob.
     4. PoolAtCapacity is caught and surfaced as 503.
     """
+    # The deployment's org is the caller's, never the body's.
+    org = caller_org(request)
+    if not org:
+        raise HTTPException(
+            status_code=403,
+            detail="An organization is required to deploy (CLI: --org-id)",
+        )
+    req.org_id = org
+
     from uuid import UUID, uuid4
     from orchestration.models.model_deployment.pool_placer import (
         PoolPlacer,
@@ -1733,7 +1742,7 @@ async def deploy_model(req: DeployModelRequest, request: Request):
     except (TypeError, ValueError):
         raise HTTPException(status_code=422, detail="pool_id must be a UUID")
     pool_row = await pool_repo.get(pool_id_uuid)
-    if pool_row is None:
+    if pool_row is None or not owns_pool(request, pool_row):
         raise HTTPException(status_code=404, detail="pool not found")
     lifecycle = (pool_row.get("lifecycle_state") or "running").lower()
     if lifecycle in ("terminating", "terminated"):
@@ -2969,11 +2978,16 @@ async def create_pool(req: CreatePoolRequest, request: Request):
             except InvalidRegionError as e:
                 raise HTTPException(status_code=422, detail=str(e))
 
-    # 3. Multi-org header override (api_gateway forwards resolved org)
-    hdr_org = request.headers.get("x-organization-id")
-    if hdr_org and req.owner_type == "user":
-        req.owner_id = hdr_org
-        req.owner_type = "organization"
+    # 3. The owner is the caller's org, never the body's: a body could
+    #    otherwise record the pool under another org.
+    owner = caller_org(request)
+    if not owner:
+        raise HTTPException(
+            status_code=403,
+            detail="An organization is required to create a pool (CLI: --org-id)",
+        )
+    req.owner_id = owner
+    req.owner_type = "organization"
 
     db_pool = request.app.state.pool
     pool_repo = ComputePoolRepository(db_pool)
@@ -3075,7 +3089,8 @@ async def create_pool(req: CreatePoolRequest, request: Request):
 
 
 @router.get("/list/pool/{pool_id}/inventory")
-async def list_pool_inventory(pool_id: str):
+async def list_pool_inventory(pool_id: str, request: Request):
+    await _require_own_pool(request, pool_id)
     async with _auth_channel() as channel:
         stub = compute_pool_pb2_grpc.ComputePoolManagerStub(channel)
 
@@ -3136,16 +3151,23 @@ def resolve_gpu_specs(allowed_gpu_types, gpu_resource_map) -> list[dict]:
 
 @router.get("/listPools/{owner_id}")
 async def list_pools(
+    request: Request,
     owner_id: str | None = None,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
+    # The org comes from the gateway; the path segment is kept only so
+    # existing callers do not break.
+    owner_id = caller_org(request)
+    if not owner_id:
+        return {"pools": [], "total": 0}
+
     async with _auth_channel() as channel:
         stub = compute_pool_pb2_grpc.ComputePoolManagerStub(channel)
 
         try:
             resp = await stub.ListPools(
-                compute_pool_pb2.ListPoolsRequest(owner_id=owner_id or "")
+                compute_pool_pb2.ListPoolsRequest(owner_id=owner_id)
             )
         except grpc.RpcError as e:
             raise HTTPException(status_code=500, detail=e.details())
@@ -3238,7 +3260,8 @@ async def list_pools(
 
 
 @router.get("/pool/{pool_id}")
-async def get_pool(pool_id: str):
+async def get_pool(pool_id: str, request: Request):
+    await _require_own_pool(request, pool_id)
     async with _auth_channel() as channel:
         stub = compute_pool_pb2_grpc.ComputePoolManagerStub(channel)
 
@@ -3300,6 +3323,7 @@ async def update_pool_metadata(pool_id: str, req: UpdatePoolMetadataRequest, req
         pool_uuid = UUID(pool_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid pool_id")
+    await _require_own_pool(request, pool_id)
 
     conn = None
     try:
@@ -3385,11 +3409,12 @@ async def update_pool_metadata(pool_id: str, req: UpdatePoolMetadataRequest, req
 
 
 @router.post("/stoppool/{pool_id}")
-async def stop_pool(pool_id: str):
+async def stop_pool(pool_id: str, request: Request):
     try:
         pool_uuid = UUID(pool_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid pool_id")
+    await _require_own_pool(request, pool_id)
 
     conn = None
     try:
@@ -3439,11 +3464,12 @@ async def stop_pool(pool_id: str):
 
 
 @router.post("/deletepool/{pool_id}")
-async def delete_pool(pool_id: str):
+async def delete_pool(pool_id: str, request: Request):
     try:
         pool_uuid = UUID(pool_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid pool_id")
+    await _require_own_pool(request, pool_id)
 
     lifecycle_state = await _get_pool_lifecycle_state(pool_uuid)
     if lifecycle_state is None:
@@ -3482,7 +3508,7 @@ async def delete_pool(pool_id: str):
 
 
 @router.delete("/pool/{pool_id}")
-async def delete_pool_rest(pool_id: str):
+async def delete_pool_rest(pool_id: str, request: Request):
     """Delete a pool from the dashboard in one call: tear down every node's
     EC2 (via the provisioning reconciler) and soft-delete the pool row.
 
@@ -3521,6 +3547,7 @@ async def delete_pool_rest(pool_id: str):
         pool_uuid = UUID(pool_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid pool_id")
+    await _require_own_pool(request, pool_id)
 
     conn = None
     try:
@@ -3732,11 +3759,11 @@ async def delete_pool_rest(pool_id: str):
 
 
 @router.get("/listDeployments/{pool_id}")
-async def list_deployments(pool_id: str | None = None):
+async def list_deployments(request: Request, pool_id: str | None = None):
     """
-    List all deployments.
-    Optionally filter by pool_id.
+    List the deployments in one of the caller's pools.
     """
+    await _require_own_pool(request, pool_id or "")
     async with _auth_channel() as channel:
         stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
 
@@ -3774,6 +3801,29 @@ async def _require_own_deployment(request, deployment_id: str) -> None:
     missing one, so another org's id reveals nothing."""
     if not owns(request, await _lookup_org_id("deployment", deployment_id)):
         raise HTTPException(status_code=404, detail="Deployment not found")
+
+
+async def _pool_owner(pool_id: str):
+    """The pool's (owner_type, owner_id) row, or None if absent or unreadable."""
+    conn = None
+    try:
+        conn = await asyncpg.connect(POSTGRES_DSN)
+        return await conn.fetchrow(
+            "SELECT owner_type, owner_id FROM compute_pools WHERE id = $1",
+            UUID(pool_id),
+        )
+    except Exception as e:
+        logger.warning("ownership lookup for pool %s failed: %s", pool_id, e)
+        return None
+    finally:
+        if conn:
+            await conn.close()
+
+
+async def _require_own_pool(request, pool_id: str) -> None:
+    """404 unless the caller's org owns the pool, as for deployments."""
+    if not owns_pool(request, await _pool_owner(pool_id)):
+        raise HTTPException(status_code=404, detail="Pool not found")
 
 
 @router.get("/logs/{deployment_id}")

@@ -792,7 +792,7 @@ def test_an_unknown_node_is_refused(kind):
 
 @pytest.mark.parametrize("kind", ["shell", "logs"])
 def test_an_older_pool_stored_as_user_typed_still_belongs_to_its_org(kind):
-    # createpool stores owner_type "user" with the org's id when no org is forwarded.
+    # createpool used to store owner_type "user" with the org's id; those rows remain.
     reg = FakeRegistry()
     app = _make_app(reg)
     admin_workers._deps.pool_repo = _FakePools(
