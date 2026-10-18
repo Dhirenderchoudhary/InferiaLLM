@@ -32,6 +32,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 
+from orchestration.ownership import caller_org, owns_pool
 from orchestration.workers.worker_controller.auth import (
     WorkerAuth,
 )
@@ -454,8 +455,7 @@ async def _node_in_caller_org(ws: WebSocket, node_id: str) -> bool:
     The gateway checks the user's permission, not which nodes it covers, so a
     node id from another organisation must be refused here.
     """
-    org_id = ws.headers.get("x-organization-id") or ""
-    if not org_id or _deps.inventory_repo is None or _deps.pool_repo is None:
+    if not caller_org(ws) or _deps.inventory_repo is None or _deps.pool_repo is None:
         return False
     try:
         node = await _deps.inventory_repo.get_node_by_id(node_id)
@@ -463,11 +463,7 @@ async def _node_in_caller_org(ws: WebSocket, node_id: str) -> bool:
     except Exception as e:
         logger.warning("org check for node %s failed: %s", node_id, e)
         return False
-    return (
-        pool is not None
-        and pool["owner_type"] == "organization"
-        and str(pool["owner_id"]) == org_id
-    )
+    return owns_pool(ws, pool)
 
 
 @router.websocket("/{node_id}/logs")

@@ -788,3 +788,22 @@ def test_an_unknown_node_is_refused(kind):
         ):
             pass
     assert reg.opens == []
+
+
+@pytest.mark.parametrize("kind", ["shell", "logs"])
+def test_an_older_pool_stored_as_user_typed_still_belongs_to_its_org(kind):
+    # createpool stores owner_type "user" with the org's id when no org is forwarded.
+    reg = FakeRegistry()
+    app = _make_app(reg)
+    admin_workers._deps.pool_repo = _FakePools(
+        {POOL_ID: {"owner_type": "user", "owner_id": ORG_ID}},
+    )
+
+    with _client(app).websocket_connect(
+        f"/v1/admin/workers/{NODE_ID}/{kind}",
+    ) as ws:
+        sid = _stream_id(reg)
+        reg.push(sid, ShellExitBody(stream_id=sid) if kind == "shell"
+                 else LogsEndBody(stream_id=sid, reason="eof"))
+        ws.receive_json()
+    assert len(reg.opens) == 1
