@@ -3867,7 +3867,7 @@ async def get_deployment_logs(deployment_id: str, request: Request):
 
 
 @router.get("/logs/{deployment_id}/persisted")
-async def get_persisted_deployment_logs(deployment_id: str):
+async def get_persisted_deployment_logs(deployment_id: str, request: Request):
     """
     Retrieve persisted terminal logs captured on deployment failure/stop.
     Returns the most recent log snapshot.
@@ -3881,19 +3881,22 @@ async def get_persisted_deployment_logs(deployment_id: str):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid UUID")
 
-    conn = await asyncpg.connect(POSTGRES_DSN)
-    try:
-        repo = TerminalLogRepository(conn)
-        log_entry = await repo.get_by_deployment(dep_uuid)
-        if not log_entry:
-            return {"logs": [], "message": "No persisted logs found for this deployment"}
-        return {
-            "logs": log_entry["log_lines"],
-            "captured_at": log_entry["captured_at"].isoformat(),
-            "trigger_event": log_entry["trigger_event"],
-        }
-    finally:
-        await conn.close()
+    # The repository acquires from a pool; a bare connection has no acquire().
+    pool = request.app.state.pool
+    org_id = await pool.fetchval(
+        "SELECT org_id FROM model_deployments WHERE deployment_id = $1", dep_uuid,
+    )
+    if not _caller_owns(request, org_id):
+        raise HTTPException(status_code=404, detail="Deployment/Pool not found")
+
+    log_entry = await TerminalLogRepository(pool).get_by_deployment(dep_uuid)
+    if not log_entry:
+        return {"logs": [], "message": "No persisted logs found for this deployment"}
+    return {
+        "logs": log_entry["log_lines"],
+        "captured_at": log_entry["captured_at"].isoformat(),
+        "trigger_event": log_entry["trigger_event"],
+    }
 
 
 @router.get("/logs/{deployment_id}/stream")
