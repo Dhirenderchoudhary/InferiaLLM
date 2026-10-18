@@ -24,6 +24,15 @@ def test_envoy_does_not_publish_its_admin_port():
     ports = [str(p) for p in _service("front-envoy").get("ports", [])]
     assert not any("9901" in p for p in ports), f"envoy admin published: {ports}"
 
+def test_orchestration_port_is_published_to_the_host_only():
+    ports = [str(p) for p in _app_service().get("ports", [])]
+    published = [p for p in ports if p.split(":")[-1] == "8080"]
+    assert published, f"orchestration port no longer published: {ports}"
+    for p in published:
+        assert p.startswith("127.0.0.1:"), (
+            f"8080 must bind to localhost, some orchestration paths skip the internal key: {p}"
+        )
+
 def test_app_does_not_hardcode_mirror_base():
     env = _app_service().get("environment", [])
     # environment may be a list ("K=V") or a dict; normalize to text and assert

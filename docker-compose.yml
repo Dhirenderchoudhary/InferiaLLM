@@ -85,7 +85,7 @@ services:
       - ${INFERIA_SSH_AUTHORIZED_KEYS_FILE:-./.ssh/authorized_keys}:/var/lib/inferia/ssh/authorized_keys:ro
     ports:
       - "${APP_PORT:-8000}:${APP_PORT:-8000}"   # Unified web: /api gateway, /inf inference, /v2 OCI mirror, / dashboard
-      - "8080:8080"                                 # Orchestration service internal port
+      - "127.0.0.1:8080:8080"                       # Orchestration, host only: the CLI uses it, nothing remote should
     deploy:
       resources:
         limits:
