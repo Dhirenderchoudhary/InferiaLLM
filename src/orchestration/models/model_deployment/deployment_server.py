@@ -3762,8 +3762,17 @@ async def list_deployments(pool_id: str | None = None):
     }
 
 
+def _caller_owns(request, org_id) -> bool:
+    """Whether the caller's org, as the gateway forwards it, owns ``org_id``.
+    Callers answer a mismatch with the same 404 as a missing deployment."""
+    caller_org = request.headers.get("x-organization-id") or ""
+    # A deployment with no org belongs to nobody: str(None) would otherwise
+    # match the gateway's "None" for a user without one.
+    return bool(org_id) and bool(caller_org) and str(org_id) == caller_org
+
+
 @router.get("/logs/{deployment_id}")
-async def get_deployment_logs(deployment_id: str):
+async def get_deployment_logs(deployment_id: str, request: Request):
     """
     Fetch logs for a deployment from the backend provider.
     Currently only supports Nosana (via IPFS result).
@@ -3782,7 +3791,8 @@ async def get_deployment_logs(deployment_id: str):
         # Get pool_id to identify provider and credential
         dep = await conn.fetchrow(
             """
-            SELECT d.pool_id, p.provider, p.provider_credential_name, d.state
+            SELECT d.pool_id, p.provider, p.provider_credential_name, d.state,
+                   d.org_id
             FROM model_deployments d
             JOIN compute_pools p ON d.pool_id = p.id
             WHERE d.deployment_id = $1
@@ -3790,7 +3800,7 @@ async def get_deployment_logs(deployment_id: str):
             dep_uuid,
         )
 
-        if not dep:
+        if not dep or not _caller_owns(request, dep["org_id"]):
             raise HTTPException(status_code=404, detail="Deployment/Pool not found")
 
         provider = dep["provider"]
@@ -3913,7 +3923,7 @@ async def get_deployment_log_stream_info(deployment_id: str, request: Request):
             dep_uuid,
         )
 
-        if not dep:
+        if not dep or not _caller_owns(request, dep["org_id"]):
             raise HTTPException(status_code=404, detail="Deployment/Pool not found")
 
         provider = dep["provider"]
@@ -4238,6 +4248,28 @@ async def list_models(model_name: str | None = None):
     }
 
 
+async def _trusted_subscription(websocket: WebSocket, data: dict) -> dict | None:
+    """Rebuild the subscription server-side: the browser carries it, so only its
+    deployment id is trusted. None means the socket was refused and closed."""
+    async def _refuse(message: str) -> None:
+        await websocket.send_json({"type": "error", "message": message})
+        await websocket.close(code=1008)
+
+    try:
+        info = await get_deployment_log_stream_info(
+            str(data.get("deployment_id") or ""), websocket,
+        )
+    except HTTPException as e:
+        await _refuse("Deployment not found" if e.status_code < 500
+                      else "Log stream unavailable")
+        return None
+    subscription = info.get("subscription") if isinstance(info, dict) else None
+    if not subscription:
+        await _refuse((info or {}).get("error") or "Live streaming is not available")
+        return None
+    return subscription
+
+
 @router.websocket("/ws")
 async def websocket_logs_endpoint(websocket: WebSocket):
     """
@@ -4260,6 +4292,10 @@ async def websocket_logs_endpoint(websocket: WebSocket):
                 {"type": "error", "message": "First message must be a subscription"}
             )
             await websocket.close()
+            return
+
+        data = await _trusted_subscription(websocket, data)
+        if data is None:
             return
 
         provider = data.get("provider")
