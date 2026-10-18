@@ -64,6 +64,20 @@ class _FakeConn:
         pass
 
 
+ORG = "org-1"
+
+
+@pytest.fixture(autouse=True)
+def _caller_owns_the_pool():
+    # Every request here comes from the pool's own org; ownership is tested
+    # in test_pool_ownership.py.
+    with patch.object(
+        deployment_server, "_pool_owner",
+        AsyncMock(return_value={"owner_type": "organization", "owner_id": ORG}),
+    ):
+        yield
+
+
 def _app():
     app = FastAPI()
     app.include_router(deployment_server.router)
@@ -83,7 +97,7 @@ def _patches(conn):
 async def _delete(path):
     transport = ASGITransport(app=_app())
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
-        return await c.delete(path)
+        return await c.delete(path, headers={"X-Organization-ID": ORG})
 
 
 async def test_delete_pool_404_when_missing():
