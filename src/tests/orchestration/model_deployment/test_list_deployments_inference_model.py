@@ -65,7 +65,7 @@ async def _fake_channel():
 async def _get(path):
     transport = ASGITransport(app=_app())
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
-        return await c.get(path)
+        return await c.get(path, headers={"X-Organization-ID": "org-1"})
 
 
 async def test_listing_includes_inference_model_distinct_from_model_name():

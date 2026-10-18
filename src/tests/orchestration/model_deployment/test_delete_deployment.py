@@ -22,6 +22,9 @@ from orchestration.models.model_deployment import (
 
 pytestmark = pytest.mark.asyncio
 
+# The caller's org, as the gateway forwards it, owns every deployment here.
+ORG = "org-1"
+
 
 class _FakeConn:
     def __init__(self, *, row):
@@ -59,14 +62,14 @@ def _patches(conn):
                      AsyncMock(return_value=conn)),
         patch.object(deployment_server, "log_audit_event", AsyncMock()),
         patch.object(deployment_server, "_lookup_org_id",
-                     AsyncMock(return_value=None)),
+                     AsyncMock(return_value=ORG)),
     )
 
 
 async def _delete(path):
     transport = ASGITransport(app=_app())
     async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
-        return await c.delete(path)
+        return await c.delete(path, headers={"X-Organization-ID": ORG})
 
 
 async def test_delete_404_when_missing():

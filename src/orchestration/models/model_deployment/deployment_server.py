@@ -34,6 +34,7 @@ from orchestration.provisioning.engine.registry import (
     _deprovision_direct_node,
 )
 from orchestration.provisioning.engine.base import AdapterType
+from orchestration.ownership import caller_org, owns
 from orchestration.models.model_deployment.model_ref import (
     resolve_artifact_uri,
 )
@@ -2010,7 +2011,8 @@ def _with_stored_secrets(incoming: dict, stored) -> dict:
 
 
 @router.get("/status/{deployment_id}")
-async def get_deployment_status(deployment_id: str):
+async def get_deployment_status(deployment_id: str, request: Request):
+    await _require_own_deployment(request, deployment_id)
     async with _auth_channel() as channel:
         stub = model_deployment_pb2_grpc.ModelDeploymentServiceStub(channel)
 
@@ -2086,6 +2088,7 @@ async def get_deployment_status(deployment_id: str):
 async def update_deployment(
     deployment_id: str, req: UpdateDeploymentRequest, request: Request,
 ):
+    await _require_own_deployment(request, deployment_id)
     # Persist control-plane-only fields (auto_replica) directly to DB
     # before/after the gRPC call, since gRPC doesn't carry these.
     if (
@@ -2525,6 +2528,7 @@ async def terminate_deployment(req: TerminateDeploymentRequest, request: Request
         deploy_uuid = UUID(req.deployment_id)
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="invalid deployment_id")
+    await _require_own_deployment(request, req.deployment_id)
 
     deps = _build_terminate_deps(
         request.app.state.pool,
@@ -2716,6 +2720,7 @@ async def start_deployment(req: TerminateDeploymentRequest, request: Request):
     )
     from fastapi.responses import JSONResponse
 
+    await _require_own_deployment(request, req.deployment_id)
     db_pool = request.app.state.pool
     controller = request.app.state.worker_controller
     event_bus = getattr(request.app.state, "event_bus", None)
@@ -2758,7 +2763,7 @@ async def start_deployment(req: TerminateDeploymentRequest, request: Request):
 
 
 @router.delete("/delete/{deployment_id}")
-async def delete_deployment(deployment_id: str):
+async def delete_deployment(deployment_id: str, request: Request):
     """Permanently delete a deployment from the database.
 
     This should only be called on deployments that are already STOPPED or TERMINATED.
@@ -2775,6 +2780,8 @@ async def delete_deployment(deployment_id: str):
 
     # Capture org_id BEFORE deletion so the audit log has it
     audit_org_id = await _lookup_org_id("deployment", deployment_id)
+    if not owns(request, audit_org_id):
+        raise HTTPException(status_code=404, detail="Deployment not found")
 
     try:
         conn = await asyncpg.connect(POSTGRES_DSN)
@@ -3762,13 +3769,11 @@ async def list_deployments(pool_id: str | None = None):
     }
 
 
-def _caller_owns(request, org_id) -> bool:
-    """Whether the caller's org, as the gateway forwards it, owns ``org_id``.
-    Callers answer a mismatch with the same 404 as a missing deployment."""
-    caller_org = request.headers.get("x-organization-id") or ""
-    # A deployment with no org belongs to nobody: str(None) would otherwise
-    # match the gateway's "None" for a user without one.
-    return bool(org_id) and bool(caller_org) and str(org_id) == caller_org
+async def _require_own_deployment(request, deployment_id: str) -> None:
+    """404 unless the caller's org owns the deployment: the same answer as a
+    missing one, so another org's id reveals nothing."""
+    if not owns(request, await _lookup_org_id("deployment", deployment_id)):
+        raise HTTPException(status_code=404, detail="Deployment not found")
 
 
 @router.get("/logs/{deployment_id}")
@@ -3800,7 +3805,7 @@ async def get_deployment_logs(deployment_id: str, request: Request):
             dep_uuid,
         )
 
-        if not dep or not _caller_owns(request, dep["org_id"]):
+        if not dep or not owns(request, dep["org_id"]):
             raise HTTPException(status_code=404, detail="Deployment/Pool not found")
 
         provider = dep["provider"]
@@ -3886,7 +3891,7 @@ async def get_persisted_deployment_logs(deployment_id: str, request: Request):
     org_id = await pool.fetchval(
         "SELECT org_id FROM model_deployments WHERE deployment_id = $1", dep_uuid,
     )
-    if not _caller_owns(request, org_id):
+    if not owns(request, org_id):
         raise HTTPException(status_code=404, detail="Deployment/Pool not found")
 
     log_entry = await TerminalLogRepository(pool).get_by_deployment(dep_uuid)
@@ -3926,7 +3931,7 @@ async def get_deployment_log_stream_info(deployment_id: str, request: Request):
             dep_uuid,
         )
 
-        if not dep or not _caller_owns(request, dep["org_id"]):
+        if not dep or not owns(request, dep["org_id"]):
             raise HTTPException(status_code=404, detail="Deployment/Pool not found")
 
         provider = dep["provider"]
@@ -4020,15 +4025,22 @@ async def get_deployment_log_stream_info(deployment_id: str, request: Request):
 
 @router.get("/deployments")
 async def list_all_deployments(
+    request: Request,
     org_id: str | None = None,
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
     """
-    List ALL deployments across all pools.
-    Optionally filter by org_id.
+    List the caller's deployments across all pools.
+
+    The org comes from the gateway, never the query string, which is kept
+    only so existing callers do not break. A caller with no org owns nothing.
     """
     import logging
+
+    org_id = caller_org(request)
+    if not org_id:
+        return {"deployments": [], "total": 0}
 
     logger = logging.getLogger("deployment-server")
     logger.info(f"list_all_deployments called for org_id: {org_id}")
