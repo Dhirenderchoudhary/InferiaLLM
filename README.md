@@ -168,10 +168,11 @@ sequenceDiagram
 
 ### Adding a self-hosted GPU node
 
-On the control-plane host, scaffold a ready-to-run worker deployment:
+On the control-plane host, scaffold a ready-to-run worker deployment. `node` and `worker` commands act only on your organisation's pools, so pass `--org-id` or set `INFERIA_ORG_ID`:
 
 ```bash
 inferiallm worker compose \
+  --org-id <ORG_UUID> \
   --pool-id <POOL_UUID> \
   --node-name gpu-1 \
   --advertise-url http://<worker-host>:8080 \
@@ -469,8 +470,8 @@ inferiallm providers list
 inferiallm providers add aws  --name prod --type access_key_id --value AKIA...
 inferiallm providers remove aws --name prod
 
-# Compute nodes
-inferiallm node add worker --name gpu-1 --pool-id <id> --advertise-url http://host:8080
+# Compute nodes (or set INFERIA_ORG_ID instead of --org-id)
+export INFERIA_ORG_ID=<org-id>
 inferiallm worker compose --pool-id <id> --node-name gpu-1 --advertise-url http://host:8080
 inferiallm worker token   --pool-id <id> --ttl-hours 1
 inferiallm worker list    --pool-id <id>

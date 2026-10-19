@@ -6,6 +6,10 @@ can be trusted. A missing org owns nothing; it never means "all orgs".
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def caller_org(conn) -> str:
     """The forwarded org, or "" when there is none.
@@ -41,7 +45,8 @@ async def owns_pool_id(conn, pool_id, pool_repo) -> bool:
         return False
     try:
         pool = await pool_repo.get(pool_id)
-    except Exception:
+    except Exception as e:
+        logger.warning("org check for pool %s failed: %s", pool_id, e)
         return False
     return owns_pool(conn, pool)
 
@@ -52,6 +57,7 @@ async def owns_node(conn, node_id, inventory_repo, pool_repo) -> bool:
         return False
     try:
         node = await inventory_repo.get_node_by_id(node_id)
-    except Exception:
+    except Exception as e:
+        logger.warning("org check for node %s failed: %s", node_id, e)
         return False
     return bool(node) and await owns_pool_id(conn, node.get("pool_id"), pool_repo)

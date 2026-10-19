@@ -219,9 +219,11 @@ class _Broken:
 
 
 @pytest.mark.asyncio
-async def test_a_failed_lookup_owns_nothing():
+async def test_a_failed_lookup_owns_nothing(caplog):
     assert await owns_pool_id(_conn(OWNER), POOL, _Broken()) is False
     assert await owns_node(_conn(OWNER), NODE, _Broken(), _Pools()) is False
+    # Logged, so a database outage is not just a run of unexplained 404s.
+    assert [r.levelname for r in caplog.records] == ["WARNING", "WARNING"]
 
 
 @pytest.mark.asyncio
