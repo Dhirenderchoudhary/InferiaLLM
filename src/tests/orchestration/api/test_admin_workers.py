@@ -39,6 +39,9 @@ from orchestration.workers.worker_controller.registry import (
 
 SECRET = "test-secret-key-at-least-32-chars-long!"
 POOL_ID = "00000000-0000-0000-0000-000000000001"
+# Every pool and worker here belongs to ORG; ownership is tested in
+# test_node_ownership.py.
+ORG = "org-1"
 NODE_ID = "11111111-2222-3333-4444-555555555555"
 
 
@@ -59,7 +62,7 @@ class FakeInventory:
     async def get_node_by_id(self, node_id):
         for w in self.workers:
             if w["id"] == node_id:
-                return w
+                return {**w, "pool_id": w.get("pool_id") or POOL_ID}
         return None
 
 
@@ -113,7 +116,7 @@ def app_and_deps():
     registry = WorkerRegistry()
     inventory = FakeInventory()
     pool_repo = FakePoolRepo(pool={
-        "id": POOL_ID, "pool_name": "p", "lifecycle_state": "running",
+        "id": POOL_ID, "pool_name": "p", "lifecycle_state": "running", "owner_type": "organization", "owner_id": ORG,
     })
 
     admin_workers.configure(
@@ -140,7 +143,7 @@ class TestMintToken:
         r = client.post(
             "/v1/admin/workers/tokens",
             json={"pool_id": POOL_ID, "ttl_hours": 1},
-            headers={"Authorization": "Bearer deployment:create"},
+            headers={"X-Organization-ID": ORG, "Authorization": "Bearer deployment:create"},
         )
         assert r.status_code == 200, r.text
         data = r.json()
@@ -165,7 +168,7 @@ class TestMintToken:
         r = client.post(
             "/v1/admin/workers/tokens",
             json={"pool_id": POOL_ID},
-            headers={"Authorization": "Bearer deployment:create"},
+            headers={"X-Organization-ID": ORG, "Authorization": "Bearer deployment:create"},
         )
         assert r.status_code == 200
         # exp ≈ now + 3600 (±60s tolerance for test runtime).
@@ -178,7 +181,7 @@ class TestMintToken:
         r = client.post(
             "/v1/admin/workers/tokens",
             json={"pool_id": POOL_ID, "ttl_hours": 100},
-            headers={"Authorization": "Bearer deployment:create"},
+            headers={"X-Organization-ID": ORG, "Authorization": "Bearer deployment:create"},
         )
         assert r.status_code == 422
 
@@ -188,7 +191,7 @@ class TestMintToken:
         r = client.post(
             "/v1/admin/workers/tokens",
             json={"pool_id": POOL_ID, "ttl_hours": 0},
-            headers={"Authorization": "Bearer deployment:create"},
+            headers={"X-Organization-ID": ORG, "Authorization": "Bearer deployment:create"},
         )
         assert r.status_code == 422
 
@@ -198,7 +201,7 @@ class TestMintToken:
         r = client.post(
             "/v1/admin/workers/tokens",
             json={"pool_id": POOL_ID},
-            headers={"Authorization": "Bearer some_other_perm"},
+            headers={"X-Organization-ID": ORG, "Authorization": "Bearer some_other_perm"},
         )
         assert r.status_code == 403
 
@@ -209,7 +212,7 @@ class TestMintToken:
         r = client.post(
             "/v1/admin/workers/tokens",
             json={"pool_id": POOL_ID},
-            headers={"Authorization": "Bearer deployment:create"},
+            headers={"X-Organization-ID": ORG, "Authorization": "Bearer deployment:create"},
         )
         assert r.status_code == 404
 
@@ -220,7 +223,7 @@ class TestMintToken:
         r = client.post(
             "/v1/admin/workers/tokens",
             json={"pool_id": POOL_ID},
-            headers={"Authorization": "Bearer deployment:create"},
+            headers={"X-Organization-ID": ORG, "Authorization": "Bearer deployment:create"},
         )
         assert r.status_code == 409
 
@@ -261,7 +264,7 @@ class TestListWorkers:
         client = TestClient(app)
         r = client.get(
             f"/v1/admin/workers/pool/{POOL_ID}",
-            headers={"Authorization": "Bearer deployment:read"},
+            headers={"X-Organization-ID": ORG, "Authorization": "Bearer deployment:read"},
         )
         assert r.status_code == 200, r.text
         workers = r.json()["workers"]
@@ -277,7 +280,7 @@ class TestListWorkers:
         client = TestClient(app)
         r = client.get(
             f"/v1/admin/workers/pool/{POOL_ID}",
-            headers={"Authorization": "Bearer deployment:read"},
+            headers={"X-Organization-ID": ORG, "Authorization": "Bearer deployment:read"},
         )
         assert r.status_code == 200
         assert r.json() == {"workers": []}
@@ -287,7 +290,7 @@ class TestListWorkers:
         client = TestClient(app)
         r = client.get(
             f"/v1/admin/workers/pool/{POOL_ID}",
-            headers={"Authorization": "Bearer some_other_perm"},
+            headers={"X-Organization-ID": ORG, "Authorization": "Bearer some_other_perm"},
         )
         assert r.status_code == 403
 
@@ -313,7 +316,7 @@ class TestRevokeWorker:
         client = TestClient(app)
         r = client.delete(
             f"/v1/admin/workers/{NODE_ID}",
-            headers={"Authorization": "Bearer deployment:delete"},
+            headers={"X-Organization-ID": ORG, "Authorization": "Bearer deployment:delete"},
         )
         assert r.status_code == 204
         assert NODE_ID in inventory.terminated
@@ -325,11 +328,11 @@ class TestRevokeWorker:
         client = TestClient(app)
         r1 = client.delete(
             f"/v1/admin/workers/{NODE_ID}",
-            headers={"Authorization": "Bearer deployment:delete"},
+            headers={"X-Organization-ID": ORG, "Authorization": "Bearer deployment:delete"},
         )
         r2 = client.delete(
             f"/v1/admin/workers/{NODE_ID}",
-            headers={"Authorization": "Bearer deployment:delete"},
+            headers={"X-Organization-ID": ORG, "Authorization": "Bearer deployment:delete"},
         )
         assert r1.status_code == 204
         # Second call still succeeds because mark_terminated_worker is
@@ -342,7 +345,7 @@ class TestRevokeWorker:
         client = TestClient(app)
         r = client.delete(
             f"/v1/admin/workers/{NODE_ID}",
-            headers={"Authorization": "Bearer deployment:delete"},
+            headers={"X-Organization-ID": ORG, "Authorization": "Bearer deployment:delete"},
         )
         assert r.status_code == 404
 
@@ -351,7 +354,7 @@ class TestRevokeWorker:
         client = TestClient(app)
         r = client.delete(
             f"/v1/admin/workers/{NODE_ID}",
-            headers={"Authorization": "Bearer some_other_perm"},
+            headers={"X-Organization-ID": ORG, "Authorization": "Bearer some_other_perm"},
         )
         assert r.status_code == 403
 
@@ -406,7 +409,7 @@ def aws_app_and_deps():
     registry = WorkerRegistry()
     inventory = AwsFakeInventory()
     pool_repo = FakePoolRepo(pool={
-        "id": POOL_ID, "pool_name": "p", "lifecycle_state": "running",
+        "id": POOL_ID, "pool_name": "p", "lifecycle_state": "running", "owner_type": "organization", "owner_id": ORG,
     })
     _aw.configure(
         worker_auth=auth,
@@ -458,7 +461,7 @@ def depin_app_and_deps():
     registry = WorkerRegistry()
     inventory = DepinFakeInventory()
     pool_repo = FakePoolRepo(pool={
-        "id": POOL_ID, "pool_name": "p", "lifecycle_state": "running",
+        "id": POOL_ID, "pool_name": "p", "lifecycle_state": "running", "owner_type": "organization", "owner_id": ORG,
         "provider_credential_name": "nosana-cred-1",
     })
     _aw.configure(
@@ -495,7 +498,7 @@ class TestRevokeDepinWorker:
             ) as c:
                 r = await c.delete(
                     f"/v1/admin/workers/{NODE_ID}",
-                    headers={"Authorization": "Bearer deployment:delete"},
+                    headers={"X-Organization-ID": ORG, "Authorization": "Bearer deployment:delete"},
                 )
 
         assert r.status_code == 204, r.text
@@ -527,7 +530,7 @@ class TestRevokeDepinWorker:
             ) as c:
                 r = await c.delete(
                     f"/v1/admin/workers/{NODE_ID}",
-                    headers={"Authorization": "Bearer deployment:delete"},
+                    headers={"X-Organization-ID": ORG, "Authorization": "Bearer deployment:delete"},
                 )
         assert r.status_code == 204, r.text
         fake_adapter.deprovision_node.assert_not_called()
@@ -555,7 +558,7 @@ class TestRevokeDepinWorker:
             ) as c:
                 r = await c.delete(
                     f"/v1/admin/workers/{NODE_ID}",
-                    headers={"Authorization": "Bearer deployment:delete"},
+                    headers={"X-Organization-ID": ORG, "Authorization": "Bearer deployment:delete"},
                 )
         assert r.status_code == 204, r.text
         fake_adapter.deprovision_node.assert_awaited_once()
@@ -610,7 +613,7 @@ class TestRevokeAwsWorker:
             ) as c:
                 r = await c.delete(
                     f"/v1/admin/workers/{NODE_ID}",
-                    headers={"Authorization": "Bearer deployment:delete"},
+                    headers={"X-Organization-ID": ORG, "Authorization": "Bearer deployment:delete"},
                 )
 
         assert r.status_code == 202, r.text
@@ -647,7 +650,7 @@ class TestRevokeAwsWorker:
             ) as c:
                 r = await c.delete(
                     f"/v1/admin/workers/{NODE_ID}",
-                    headers={"Authorization": "Bearer deployment:delete"},
+                    headers={"X-Organization-ID": ORG, "Authorization": "Bearer deployment:delete"},
                 )
 
         assert r.status_code == 204, r.text
@@ -672,7 +675,7 @@ class TestRevokeAwsWorker:
             ) as c:
                 r = await c.delete(
                     f"/v1/admin/workers/{NODE_ID}",
-                    headers={"Authorization": "Bearer deployment:delete"},
+                    headers={"X-Organization-ID": ORG, "Authorization": "Bearer deployment:delete"},
                 )
         assert r.status_code == 204
         spawn.assert_not_called()
@@ -687,13 +690,14 @@ class TestRevokeAwsWorker:
 
 class TestNodeMetrics:
     def test_returns_latest_and_samples(self, app_and_deps):
-        app, _auth, registry, *_ = app_and_deps
+        app, _auth, registry, inventory, _pool = app_and_deps
+        inventory.workers.append({"id": NODE_ID})
         registry.record_metrics(NODE_ID, {"ts": "a", "cpu_pct": 1.0})
         registry.record_metrics(NODE_ID, {"ts": "b", "cpu_pct": 2.0})
         client = TestClient(app)
         r = client.get(
             f"/v1/admin/workers/{NODE_ID}/metrics",
-            headers={"Authorization": "Bearer deployment:read"},
+            headers={"X-Organization-ID": ORG, "Authorization": "Bearer deployment:read"},
         )
         assert r.status_code == 200, r.text
         data = r.json()
@@ -701,11 +705,13 @@ class TestNodeMetrics:
         assert data["latest"]["ts"] == "b"
 
     def test_empty_buffer_returns_null_latest_not_404(self, app_and_deps):
-        app, *_ = app_and_deps
+        # A known node that has not reported yet: empty, not 404.
+        app, _auth, _reg, inventory, _pool = app_and_deps
+        inventory.workers.append({"id": NODE_ID})
         client = TestClient(app)
         r = client.get(
             f"/v1/admin/workers/{NODE_ID}/metrics",
-            headers={"Authorization": "Bearer deployment:read"},
+            headers={"X-Organization-ID": ORG, "Authorization": "Bearer deployment:read"},
         )
         assert r.status_code == 200, r.text
         assert r.json() == {"latest": None, "samples": []}
@@ -715,6 +721,6 @@ class TestNodeMetrics:
         client = TestClient(app)
         r = client.get(
             f"/v1/admin/workers/{NODE_ID}/metrics",
-            headers={"Authorization": "Bearer some:other"},
+            headers={"X-Organization-ID": ORG, "Authorization": "Bearer some:other"},
         )
         assert r.status_code == 403

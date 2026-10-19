@@ -866,6 +866,10 @@ def main(argv=None):
         default=None,
         help="Internal API key (default: INTERNAL_API_KEY env var)",
     )
+    tok_p.add_argument(
+        "--org-id", default=None,
+        help="Organization the command acts in (default: INFERIA_ORG_ID env var)",
+    )
 
     # worker compose — scaffold a ready-to-run docker-compose directory
     cmp_p = worker_sub.add_parser(
@@ -911,6 +915,10 @@ def main(argv=None):
         default=None,
         help="Internal API key (default: INTERNAL_API_KEY env var)",
     )
+    cmp_p.add_argument(
+        "--org-id", default=None,
+        help="Organization the command acts in (default: INFERIA_ORG_ID env var)",
+    )
 
     # worker list — show workers in a pool
     list_w = worker_sub.add_parser(
@@ -927,6 +935,10 @@ def main(argv=None):
         "--internal-api-key",
         default=None,
         help="Internal API key (default: INTERNAL_API_KEY env var)",
+    )
+    list_w.add_argument(
+        "--org-id", default=None,
+        help="Organization the command acts in (default: INFERIA_ORG_ID env var)",
     )
 
     # --- node sub-command (node-centric API) -------------------------------
@@ -956,23 +968,39 @@ def main(argv=None):
     nl_set.add_argument("kv", nargs="+", help="key=value pairs")
     nl_set.add_argument("--orchestration-url", default=None)
     nl_set.add_argument("--internal-api-key", default=None)
+    nl_set.add_argument(
+        "--org-id", default=None,
+        help="Organization the command acts in (default: INFERIA_ORG_ID env var)",
+    )
 
     nl_del = nl_lab_sub.add_parser("del", help="Remove labels from a node")
     nl_del.add_argument("node_id")
     nl_del.add_argument("keys", nargs="+", help="label keys to remove")
     nl_del.add_argument("--orchestration-url", default=None)
     nl_del.add_argument("--internal-api-key", default=None)
+    nl_del.add_argument(
+        "--org-id", default=None,
+        help="Organization the command acts in (default: INFERIA_ORG_ID env var)",
+    )
 
     nl_get = nl_lab_sub.add_parser("get", help="Print a node's labels as JSON")
     nl_get.add_argument("node_id")
     nl_get.add_argument("--orchestration-url", default=None)
     nl_get.add_argument("--internal-api-key", default=None)
+    nl_get.add_argument(
+        "--org-id", default=None,
+        help="Organization the command acts in (default: INFERIA_ORG_ID env var)",
+    )
 
     # node rm
     n_rm = node_sub.add_parser("rm", help="Soft-delete a node")
     n_rm.add_argument("node_id")
     n_rm.add_argument("--orchestration-url", default=None)
     n_rm.add_argument("--internal-api-key", default=None)
+    n_rm.add_argument(
+        "--org-id", default=None,
+        help="Organization the command acts in (default: INFERIA_ORG_ID env var)",
+    )
 
     # node pool …
     np = node_sub.add_parser("pool", help="Pool management")

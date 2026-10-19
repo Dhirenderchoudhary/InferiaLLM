@@ -31,6 +31,7 @@ from orchestration.repositories.inventory_repo import (
     NodeNotFoundError,
     NodeTerminatedError,
 )
+from orchestration.ownership import owns_node, owns_pool_id
 from orchestration.state_machine.jobs.model import Phase
 
 logger = logging.getLogger("nodes_api")
@@ -113,6 +114,13 @@ def _org_id_from_headers(authorization, x_organization_id) -> str:
     if not x_organization_id:
         raise HTTPException(401, "missing X-Organization-ID header")
     return x_organization_id
+
+
+async def _require_own_node(request: Request, node_id: str = Path(...)) -> None:
+    """404 unless the node sits in one of the caller's pools: the same answer
+    as a missing node, so another org's id reveals nothing."""
+    if not await owns_node(request, node_id, _deps.inventory_repo, _deps.pool_repo):
+        raise HTTPException(404, "node not found")
 
 
 # ---------------------------------------------------------------------------
@@ -263,21 +271,27 @@ async def list_nodes(
 
 
 @router.get("/xds-status")
-async def list_xds_nodes():
-    """Return all non-terminated nodes in xDS control-plane format.
+async def list_xds_nodes(request: Request):
+    """The caller's non-terminated nodes in xDS control-plane format, with
+    engines derived from running deployments.
 
-    Internal endpoint for the envoyproxy xDS control plane. Returns every
-    node regardless of org, with engines derived from running deployments.
-    No auth — only accessible via internal API key.
+    The gateway exposes this route, so it is scoped like the other listings;
+    the xDS control plane reads the repository directly, not this route.
     """
     rows = await _deps.inventory_repo.list_xds_nodes()
-    return {"nodes": rows}
+    owned: dict = {}
+    for row in rows:
+        pool_id = row.get("pool_id")
+        if pool_id not in owned:
+            owned[pool_id] = await owns_pool_id(request, pool_id, _deps.pool_repo)
+    return {"nodes": [row for row in rows if owned[row.get("pool_id")]]}
 
 
 @router.get("/{node_id}", response_model=NodeView)
 async def get_node(
     node_id: str = Path(...),
     _granted: bool = Depends(_need_perm("deployment:list")),
+    _owned: None = Depends(_require_own_node),
 ):
     row = await _deps.inventory_repo.get_node(node_id=node_id)
     if not row:
@@ -290,6 +304,7 @@ async def get_node_log_stream(
     node_id: str = Path(...),
     request: Request = None,
     _granted: bool = Depends(_need_perm("deployment:list")),
+    _owned: None = Depends(_require_own_node),
 ):
     """WS connection info for streaming a node's live container logs.
 
@@ -392,6 +407,7 @@ async def get_node_deploy_metrics(
     node_id: str = Path(...),
     deployment_id: str = Path(...),
     _granted: bool = Depends(_need_perm("deployment:list")),
+    _owned: None = Depends(_require_own_node),
 ):
     """Return the most recent per-deployment metrics from the worker heartbeat."""
     metrics = await _deps.inventory_repo.get_deploy_metrics(
@@ -407,6 +423,7 @@ async def patch_labels(
     body: PatchLabelsBody,
     node_id: str = Path(...),
     _granted: bool = Depends(_need_perm("deployment:update")),
+    _owned: None = Depends(_require_own_node),
 ):
     overlap = set(body.add.keys()) & set(body.remove)
     if overlap:
@@ -430,6 +447,7 @@ async def patch_labels(
 async def delete_node(
     node_id: str = Path(...),
     _granted: bool = Depends(_need_perm("deployment:delete")),
+    _owned: None = Depends(_require_own_node),
 ):
     existing = await _deps.inventory_repo.get_node(node_id=node_id)
     if not existing:
@@ -546,6 +564,7 @@ async def delete_node(
 async def retry_provisioning(
     node_id: str = Path(...),
     _granted: bool = Depends(_need_perm("deployment:create")),
+    _owned: None = Depends(_require_own_node),
 ):
     """Re-enqueue a failed provisioning job.
 
@@ -728,6 +747,7 @@ class DepinDetails(BaseModel):
 async def get_depin_details(
     node_id: str = Path(...),
     _granted: bool = Depends(_need_perm("deployment:list")),
+    _owned: None = Depends(_require_own_node),
 ):
     """Per-node instance details for a DePIN (Nosana/Akash) node — the Instance
     Details tab. Reads the node's stored metadata (which ``NodeView`` drops)
@@ -811,6 +831,7 @@ async def get_depin_details(
 async def get_provisioning(
     node_id: str = Path(...),
     _granted: bool = Depends(_need_perm("deployment:list")),
+    _owned: None = Depends(_require_own_node),
 ):
     row = await _deps.inventory_repo.get_node(node_id=node_id)
     if not row:
@@ -938,6 +959,7 @@ async def get_provisioning_logs(
     after: int = Query(default=0, ge=0),
     limit: int = Query(default=500, ge=1, le=2000),
     _granted: bool = Depends(_need_perm("deployment:list")),
+    _owned: None = Depends(_require_own_node),
 ):
     row = await _deps.inventory_repo.get_node(node_id=node_id)
     if not row:
@@ -965,6 +987,7 @@ async def get_provisioning_logs(
 async def get_ec2_console(
     node_id: str = Path(...),
     _granted: bool = Depends(_need_perm("deployment:list")),
+    _owned: None = Depends(_require_own_node),
 ):
     from datetime import datetime, timezone
     row = await _deps.inventory_repo.get_node(node_id=node_id)

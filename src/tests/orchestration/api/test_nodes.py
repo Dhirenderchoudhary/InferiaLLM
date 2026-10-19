@@ -61,6 +61,12 @@ class FakeInventory:
     async def get_node(self, *, node_id):
         return self.nodes.get(node_id)
 
+    async def get_node_by_id(self, node_id):
+        # Every node here is in ORG's pool; ownership is tested in
+        # test_node_ownership.py.
+        node = self.nodes.get(node_id)
+        return {**node, "pool_id": node.get("pool_id") or POOL} if node else None
+
     async def set_labels(self, *, node_id, add, remove):
         node = self.nodes.get(node_id)
         if not node:
@@ -106,6 +112,9 @@ class FakeInventory:
 class FakePoolRepo:
     async def ensure_default_pool(self, *, org_id):
         return POOL
+
+    async def get(self, pool_id):
+        return {"owner_type": "organization", "owner_id": ORG}
 
 
 class FakeAdapter:
@@ -639,7 +648,7 @@ class TestDeleteAwsNode:
 
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
-            r = await c.delete(f"/v1/nodes/{NODE}", headers={"Authorization": "Bearer t"})
+            r = await c.delete(f"/v1/nodes/{NODE}", headers={"Authorization": "Bearer t", "X-Organization-ID": ORG})
 
         assert r.status_code == 202, r.text
         assert r.json()["state"] == "terminating"
@@ -695,7 +704,7 @@ class TestDeleteAwsNode:
         app = _configure_with_provisioning_repo(inventory, provisioning_repo)
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
-            r = await c.delete(f"/v1/nodes/{NODE}", headers={"Authorization": "Bearer t"})
+            r = await c.delete(f"/v1/nodes/{NODE}", headers={"Authorization": "Bearer t", "X-Organization-ID": ORG})
         assert r.status_code == 204
         provisioning_repo.force_cancel.assert_not_called()
         assert inventory.nodes[NODE]["state"] == "terminated"
@@ -723,7 +732,8 @@ class DepinPoolRepo:
         return POOL
 
     async def get(self, pool_id):
-        return {"id": pool_id, "provider_credential_name": self.cred}
+        return {"id": pool_id, "provider_credential_name": self.cred,
+                "owner_type": "organization", "owner_id": ORG}
 
 
 class DepinInventory(FakeInventory):
@@ -767,7 +777,7 @@ class TestDeleteDepinNode:
         ):
             transport = ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
-                r = await c.delete(f"/v1/nodes/{NODE}", headers={"Authorization": "Bearer t"})
+                r = await c.delete(f"/v1/nodes/{NODE}", headers={"Authorization": "Bearer t", "X-Organization-ID": ORG})
         assert r.status_code == 204, r.text
         fake_adapter.deprovision_node.assert_awaited_once_with(
             provider_instance_id="job-addr-123",
@@ -790,7 +800,7 @@ class TestDeleteDepinNode:
         ):
             transport = ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
-                r = await c.delete(f"/v1/nodes/{NODE}", headers={"Authorization": "Bearer t"})
+                r = await c.delete(f"/v1/nodes/{NODE}", headers={"Authorization": "Bearer t", "X-Organization-ID": ORG})
         assert r.status_code == 204, r.text
         fake_adapter.deprovision_node.assert_not_called()
         assert inventory.nodes[NODE]["state"] == "terminated"
@@ -811,7 +821,7 @@ class TestDeleteDepinNode:
         ):
             transport = ASGITransport(app=app)
             async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
-                r = await c.delete(f"/v1/nodes/{NODE}", headers={"Authorization": "Bearer t"})
+                r = await c.delete(f"/v1/nodes/{NODE}", headers={"Authorization": "Bearer t", "X-Organization-ID": ORG})
         assert r.status_code == 204, r.text
         fake_adapter.deprovision_node.assert_awaited_once()
         assert inventory.nodes[NODE]["state"] == "terminated"
@@ -891,7 +901,7 @@ def test_get_provisioning_includes_error_and_aws_metadata():
     app = FastAPI()
     app.include_router(nodes_api.router)
     client = TestClient(app)
-    auth = {"Authorization": "Bearer test"}
+    auth = {"Authorization": "Bearer test", "X-Organization-ID": ORG}
     resp = client.get(f"/v1/nodes/{nid}/provisioning", headers=auth)
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -928,7 +938,7 @@ def test_get_provisioning_returns_404_when_node_missing():
     app = FastAPI()
     app.include_router(nodes_api.router)
     client = TestClient(app)
-    auth = {"Authorization": "Bearer test"}
+    auth = {"Authorization": "Bearer test", "X-Organization-ID": ORG}
     resp = client.get(
         "/v1/nodes/00000000-0000-0000-0000-000000000000/provisioning",
         headers=auth,
@@ -984,7 +994,7 @@ def test_retry_provisioning_on_failed_job_returns_200_and_requeues():
 
     app = _configure_with_provisioning_repo(inventory, provisioning_repo)
     client = TestClient(app)
-    auth = {"Authorization": "Bearer test"}
+    auth = {"Authorization": "Bearer test", "X-Organization-ID": ORG}
     resp = client.post(
         f"/v1/nodes/{nid}/provisioning/retry", headers=auth,
     )
@@ -1019,7 +1029,7 @@ def test_retry_provisioning_on_non_failed_job_returns_409():
 
     app = _configure_with_provisioning_repo(inventory, provisioning_repo)
     client = TestClient(app)
-    auth = {"Authorization": "Bearer test"}
+    auth = {"Authorization": "Bearer test", "X-Organization-ID": ORG}
     resp = client.post(
         f"/v1/nodes/{nid}/provisioning/retry", headers=auth,
     )
@@ -1036,7 +1046,7 @@ def test_retry_provisioning_on_missing_node_returns_404():
 
     app = _configure_with_provisioning_repo(inventory, provisioning_repo)
     client = TestClient(app)
-    auth = {"Authorization": "Bearer test"}
+    auth = {"Authorization": "Bearer test", "X-Organization-ID": ORG}
     resp = client.post(
         f"/v1/nodes/{uuid.uuid4()}/provisioning/retry", headers=auth,
     )
@@ -1071,7 +1081,7 @@ def _delete_with_job(phase: Phase, *, node_state: str):
     app = _configure_with_provisioning_repo(inventory, provisioning_repo)
     client = TestClient(app)
     resp = client.delete(
-        f"/v1/nodes/{nid}", headers={"Authorization": "Bearer test"},
+        f"/v1/nodes/{nid}", headers={"Authorization": "Bearer test", "X-Organization-ID": ORG},
     )
     return resp, inventory, provisioning_repo, nid
 
@@ -1133,7 +1143,7 @@ def test_delete_missing_node_returns_404_with_provisioning_repo():
 
     app = _configure_with_provisioning_repo(inventory, provisioning_repo)
     client = TestClient(app)
-    auth = {"Authorization": "Bearer test"}
+    auth = {"Authorization": "Bearer test", "X-Organization-ID": ORG}
     resp = client.delete(f"/v1/nodes/{uuid.uuid4()}", headers=auth)
     assert resp.status_code == 404
     # We bailed before consulting the provisioning repo.

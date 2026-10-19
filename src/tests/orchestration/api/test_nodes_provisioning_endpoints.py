@@ -31,11 +31,27 @@ from fastapi.testclient import TestClient  # noqa: E402
 from orchestration.api import nodes as nodes_api  # noqa: E402
 
 
+# Every node here is in a pool ORG owns; ownership is tested in
+# test_node_ownership.py.
+ORG = str(uuid4())
+
+
 def _user_ctx_header():
     return {
         "authorization": "Bearer test",
-        "x-organization-id": str(uuid4()),
+        "x-organization-id": ORG,
     }
+
+
+def _by_id(inv):
+    """get_node_by_id answering from the same row as the mocked get_node."""
+    async def _get(node_id):
+        return await inv.get_node(node_id=node_id)
+    return _get
+
+
+def _owned(pool_row=None):
+    return {**(pool_row or {}), "owner_type": "organization", "owner_id": ORG}
 
 
 @pytest.fixture
@@ -51,6 +67,7 @@ def app_and_deps():
         "provider_instance_id": "placeholder:" + str(pool_id),
     }
     inv.get_node = AsyncMock(return_value=node_row)
+    inv.get_node_by_id = _by_id(inv)
     prov = MagicMock()
     prov.summarize_phases = AsyncMock(return_value=[
         {"phase": "prepare", "status": "succeeded",
@@ -79,7 +96,8 @@ def app_and_deps():
     })
     app = FastAPI()
     nodes_api.configure(
-        inventory_repo=inv, pool_repo=MagicMock(), worker_auth=MagicMock(),
+        inventory_repo=inv, pool_repo=MagicMock(get=AsyncMock(return_value=_owned())),
+        worker_auth=MagicMock(),
         control_plane_external_url="", adapters={"aws": aws_adapter},
         require_permission=lambda _: (lambda: True),
         provisioning_repo=prov,
@@ -269,6 +287,7 @@ def _build_region_app(
 
     inv = MagicMock()
     inv.get_node = AsyncMock(return_value=node_row)
+    inv.get_node_by_id = _by_id(inv)
 
     prov = MagicMock()
     prov.get_by_node = AsyncMock(return_value=job)
@@ -279,7 +298,7 @@ def _build_region_app(
     prov.current_phase = AsyncMock(return_value=None)
 
     pool_repo_mock = MagicMock()
-    pool_repo_mock.get = AsyncMock(return_value=pool_row)
+    pool_repo_mock.get = AsyncMock(return_value=_owned(pool_row))
 
     aws_adapter = MagicMock()
     aws_adapter.get_logs = AsyncMock(return_value={"logs": ["line1"]})
@@ -307,9 +326,11 @@ def test_region_from_job_spec(app_and_deps):
     prov.get_by_node = AsyncMock(return_value=job)
 
     app = FastAPI()
+    inv = MagicMock(**{"get_node": AsyncMock(return_value=node_row)})
+    inv.get_node_by_id = _by_id(inv)
     nodes_api.configure(
-        inventory_repo=MagicMock(**{"get_node": AsyncMock(return_value=node_row)}),
-        pool_repo=MagicMock(),
+        inventory_repo=inv,
+        pool_repo=MagicMock(get=AsyncMock(return_value=_owned())),
         worker_auth=MagicMock(),
         control_plane_external_url="",
         adapters={"aws": aws_adapter},
