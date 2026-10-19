@@ -69,9 +69,11 @@ def _internal_headers(args, org_id: str | None = None) -> dict:
         "X-Gateway-Request": "true",
         "Content-Type": "application/json",
     }
+    # Orchestration only acts on the org's own pools and nodes.
     org = org_id or getattr(args, "org_id", None) or os.getenv("INFERIA_ORG_ID")
-    if org:
-        headers["X-Organization-ID"] = org
+    if not org:
+        sys.exit("error: --org-id required (or set INFERIA_ORG_ID)")
+    headers["X-Organization-ID"] = org
     return headers
 
 
@@ -91,8 +93,6 @@ def _parse_labels(items: Iterable[str] | None) -> dict[str, str]:
 
 
 def _cmd_list(args) -> None:
-    if not args.org_id and not os.getenv("INFERIA_ORG_ID"):
-        sys.exit("error: --org-id required (or set INFERIA_ORG_ID)")
     base = _orchestration_base(args)
     qs = ""
     if args.label:

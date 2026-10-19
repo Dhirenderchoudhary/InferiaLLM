@@ -36,7 +36,7 @@ def _fake_args(**kw):
         image_tag = kw.get("image_tag")
         orchestration_url = kw.get("orchestration_url", "http://localhost:8080")
         internal_api_key = kw.get("internal_api_key", "test-key")
-        org_id = kw.get("org_id")
+        org_id = kw.get("org_id", "org-1")
 
     return A()
 

@@ -69,6 +69,8 @@ def _internal_headers(args) -> dict:
         "X-Internal-API-Key": key,
         "X-Gateway-Request": "true",
         "Content-Type": "application/json",
+        # Orchestration only acts on the org's own pools and nodes.
+        "X-Organization-ID": _resolve(args, "org-id", "INFERIA_ORG_ID"),
     }
 
 

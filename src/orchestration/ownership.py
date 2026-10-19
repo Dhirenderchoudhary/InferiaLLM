@@ -6,6 +6,10 @@ can be trusted. A missing org owns nothing; it never means "all orgs".
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def caller_org(conn) -> str:
     """The forwarded org, or "" when there is none.
@@ -30,6 +34,30 @@ def owns_pool(conn, pool) -> bool:
     """
     return (
         pool is not None
-        and pool["owner_type"] in ("organization", "user")
-        and owns(conn, pool["owner_id"])
+        and pool.get("owner_type") in ("organization", "user")
+        and owns(conn, pool.get("owner_id"))
     )
+
+
+async def owns_pool_id(conn, pool_id, pool_repo) -> bool:
+    """owns_pool for a pool looked up by id. Any lookup failure owns nothing."""
+    if not caller_org(conn) or pool_repo is None or not pool_id:
+        return False
+    try:
+        pool = await pool_repo.get(pool_id)
+    except Exception as e:
+        logger.warning("org check for pool %s failed: %s", pool_id, e)
+        return False
+    return owns_pool(conn, pool)
+
+
+async def owns_node(conn, node_id, inventory_repo, pool_repo) -> bool:
+    """Whether the node sits in a pool the caller's org owns."""
+    if not caller_org(conn) or inventory_repo is None:
+        return False
+    try:
+        node = await inventory_repo.get_node_by_id(node_id)
+    except Exception as e:
+        logger.warning("org check for node %s failed: %s", node_id, e)
+        return False
+    return bool(node) and await owns_pool_id(conn, node.get("pool_id"), pool_repo)

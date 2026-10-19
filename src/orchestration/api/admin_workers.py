@@ -32,7 +32,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 
-from orchestration.ownership import caller_org, owns_pool
+from orchestration.ownership import owns_node, owns_pool, owns_pool_id
 from orchestration.workers.worker_controller.auth import (
     WorkerAuth,
 )
@@ -198,7 +198,7 @@ async def mint_bootstrap_token(
 ):
     pool_repo = _pools()
     pool = await pool_repo.get(body.pool_id)
-    if pool is None:
+    if pool is None or not owns_pool(request, pool):
         raise HTTPException(status_code=404, detail="pool not found")
     if pool.get("lifecycle_state") in ("terminating", "terminated"):
         raise HTTPException(
@@ -240,8 +240,11 @@ async def mint_bootstrap_token(
 @router.get("/pool/{pool_id}", response_model=ListResponse)
 async def list_workers(
     pool_id: str,
+    request: Request,
     _granted: bool = Depends(_need_perm("deployment:read")),
 ):
+    if not await owns_pool_id(request, pool_id, _deps.pool_repo):
+        raise HTTPException(status_code=404, detail="pool not found")
     rows = await _inventory().list_workers(pool_id=pool_id)
     live = set(_registry().list_nodes())
     workers = [_row_to_view(r, connected=str(r["id"]) in live) for r in rows]
@@ -251,11 +254,14 @@ async def list_workers(
 @router.delete("/{node_id}")
 async def revoke_worker(
     node_id: str,
+    request: Request,
     _granted: bool = Depends(_need_perm("deployment:delete")),
 ):
-    # Verify the node exists. Return 404 if not.
+    # Verify the node exists and is the caller's. Return 404 if not.
     node = await _inventory().get_node_by_id(node_id)
-    if node is None:
+    if node is None or not await owns_pool_id(
+        request, node.get("pool_id"), _deps.pool_repo,
+    ):
         raise HTTPException(status_code=404, detail="node not found")
 
     # AWS branch: route the EC2 tear-down through the provisioning
@@ -374,11 +380,14 @@ async def revoke_worker(
 @router.get("/{node_id}/metrics", response_model=NodeMetricsResponse)
 async def get_node_metrics(
     node_id: str,
+    request: Request,
     _granted: bool = Depends(_need_perm("deployment:read")),
 ):
     """Live per-node resource metrics (CPU/mem/GPU/net/disk) from the worker
     heartbeat ring buffer. Empty buffer (node just connected, never sent
     metrics, or disconnected) -> {"latest": null, "samples": []} — not a 404."""
+    if not await owns_node(request, node_id, _deps.inventory_repo, _deps.pool_repo):
+        raise HTTPException(status_code=404, detail="node not found")
     samples = _registry().get_metrics(node_id)
     latest = samples[-1] if samples else None
     return NodeMetricsResponse(latest=latest, samples=samples)
@@ -455,15 +464,7 @@ async def _node_in_caller_org(ws: WebSocket, node_id: str) -> bool:
     The gateway checks the user's permission, not which nodes it covers, so a
     node id from another organisation must be refused here.
     """
-    if not caller_org(ws) or _deps.inventory_repo is None or _deps.pool_repo is None:
-        return False
-    try:
-        node = await _deps.inventory_repo.get_node_by_id(node_id)
-        pool = await _deps.pool_repo.get(node["pool_id"]) if node else None
-    except Exception as e:
-        logger.warning("org check for node %s failed: %s", node_id, e)
-        return False
-    return owns_pool(ws, pool)
+    return await owns_node(ws, node_id, _deps.inventory_repo, _deps.pool_repo)
 
 
 @router.websocket("/{node_id}/logs")
