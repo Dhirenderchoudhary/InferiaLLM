@@ -207,3 +207,23 @@ class TestInternalKeyValidation:
                 assert resp.status_code == 200
 
         asyncio.run(_run())
+
+
+class TestUpgradeHeaderDoesNotBypassKey:
+    """An HTTP request carrying `Upgrade: websocket` is still an HTTP request."""
+
+    def test_upgrade_header_without_key_returns_401(self):
+        app = _make_test_app(internal_api_key="test-key-32chars-aaaaaaaaaaaaaaaa")
+
+        async def _run():
+            async with AsyncClient(
+                transport=ASGITransport(app=app, raise_app_exceptions=False),
+                base_url="http://test",
+            ) as client:
+                resp = await client.get(
+                    "/internal/secret",
+                    headers={"Upgrade": "websocket", "Connection": "Upgrade"},
+                )
+                assert resp.status_code == 401
+
+        asyncio.run(_run())

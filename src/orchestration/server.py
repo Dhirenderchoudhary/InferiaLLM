@@ -444,7 +444,6 @@ async def serve():
         internal_api_key=settings.internal_api_key,
         skip_paths=[
             "/health",
-            "/deployment/ws",
             "/v1/workers/register",
             "/v1/workers/channel",
             "/v3/discovery:clusters",
