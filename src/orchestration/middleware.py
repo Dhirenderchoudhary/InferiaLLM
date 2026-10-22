@@ -1,5 +1,6 @@
 from fastapi import status
 from fastapi.responses import JSONResponse
+import hmac
 import logging
 from orchestration.config import settings
 
@@ -13,11 +14,6 @@ class InternalAuthMiddleware:
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http" and scope["type"] != "websocket":
-            await self.app(scope, receive, send)
-            return
-
-        # 1. Skip validation for WebSockets (browsers can't send headers)
-        if scope["type"] == "websocket":
             await self.app(scope, receive, send)
             return
 
@@ -37,6 +33,9 @@ class InternalAuthMiddleware:
 
         if not api_key:
             logger.warning(f"Unauthorized access attempt to {path}: Missing API Key")
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 1008})
+                return
             response = JSONResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 content={"detail": "Missing X-Internal-API-Key header"},
@@ -44,8 +43,13 @@ class InternalAuthMiddleware:
             await response(scope, receive, send)
             return
 
-        if api_key != self.internal_api_key:
+        if not self.internal_api_key or not hmac.compare_digest(
+            api_key.encode(), self.internal_api_key.encode()
+        ):
             logger.warning(f"Unauthorized access attempt to {path}: Invalid API Key")
+            if scope["type"] == "websocket":
+                await send({"type": "websocket.close", "code": 1008})
+                return
             response = JSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
                 content={"detail": "Invalid internal API key"},
@@ -60,5 +64,5 @@ def internal_auth_middleware_factory(app):
     return InternalAuthMiddleware(
         app, 
         internal_api_key=settings.internal_api_key, 
-        skip_paths=["/health", "/deployment/ws"]
+        skip_paths=["/health"]
     )

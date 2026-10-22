@@ -2,6 +2,7 @@
 Shared middleware for the InferiaLLM ecosystem.
 """
 
+import hmac
 import logging
 import uuid
 from typing import List, Optional
@@ -66,13 +67,6 @@ def create_internal_auth_middleware(
                     response.headers["X-Request-ID"] = request_id
                 return response
 
-            # WebSocket handshake check - browsers can't set custom headers for WS
-            upgrade_header = request.headers.get("upgrade", "").lower()
-            if upgrade_header == "websocket":
-                logger.info(f"Allowing WebSocket handshake for {path}")
-                response = await call_next(request)
-                return response
-
             # 3. Only check if path prefix matches (if provided)
             if check_path_prefix and not path.startswith(check_path_prefix):
                 response = await call_next(request)
@@ -109,7 +103,7 @@ def create_internal_auth_middleware(
                     content={"detail": "Missing X-Internal-API-Key header"},
                 )
 
-            if api_key != internal_api_key:
+            if not hmac.compare_digest(api_key.encode(), internal_api_key.encode()):
                 logger.warning(
                     f"Unauthorized access attempt to {path}: Invalid API Key"
                 )
