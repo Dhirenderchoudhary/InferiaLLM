@@ -58,6 +58,7 @@ class TestJWTSecretGuard:
             jwt_secret_key=real_secret,
             environment="production",
             database_url="postgresql+asyncpg://x:x@localhost/x",
+            secret_encryption_key="k" * 44,
         )
         with patch.dict(os.environ, env, clear=True):
             s = Settings(_env_file=None)
