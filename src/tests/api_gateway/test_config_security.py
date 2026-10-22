@@ -87,3 +87,24 @@ class TestJWTSecretGuard:
         with patch.dict(os.environ, env, clear=True):
             s = Settings(_env_file=None)
             assert s.jwt_secret_key == PLACEHOLDER
+
+
+class TestSecretEncryptionKeyGuard:
+    def test_missing_key_raises_in_production(self):
+        env = _make_env(
+            jwt_secret_key="a" * 64,
+            environment="production",
+            database_url="postgresql+asyncpg://x:x@localhost/x",
+        )
+        with patch.dict(os.environ, env, clear=True):
+            with pytest.raises(RuntimeError, match="SECRET_ENCRYPTION_KEY"):
+                Settings(_env_file=None)
+
+    def test_missing_key_allowed_in_development(self):
+        env = _make_env(
+            jwt_secret_key="a" * 64,
+            environment="development",
+            database_url="postgresql+asyncpg://x:x@localhost/x",
+        )
+        with patch.dict(os.environ, env, clear=True):
+            assert Settings(_env_file=None).secret_encryption_key is None

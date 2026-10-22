@@ -55,3 +55,9 @@ class TestEncryptionServiceRoundtrip:
         assert result == "plaintext"
         result = no_key_service.decrypt_string("plaintext")
         assert result == "plaintext"
+
+
+def test_invalid_key_raises_instead_of_storing_plaintext():
+    with patch("api_gateway.db.security.ENCRYPTION_KEY", "not-a-fernet-key"):
+        with pytest.raises(ValueError, match="SECRET_ENCRYPTION_KEY"):
+            EncryptionService()
