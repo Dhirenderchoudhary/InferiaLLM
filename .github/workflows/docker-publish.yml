@@ -11,7 +11,11 @@ env:
   REGISTRY_IMAGE: inferiaai/inferiallm
 
 jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
   build-and-push:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

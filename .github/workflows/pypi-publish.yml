@@ -17,7 +17,11 @@ on:
           - "true"
 
 jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
   pypi-publish:
+    needs: test
     name: Build and publish to PyPI
     runs-on: ubuntu-latest
     permissions:
