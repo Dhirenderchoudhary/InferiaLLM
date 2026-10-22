@@ -35,6 +35,7 @@ class RateLimiter:
 
         # Store: key -> {count: int, first_request: float, blocked_until: Optional[float]}
         self._store = {}
+        self._last_cleanup = 0.0
 
     def _get_key(self, identifier: str, ip_address: str) -> str:
         """Create a composite key from identifier and IP."""
@@ -51,6 +52,11 @@ class RateLimiter:
         """
         key = self._get_key(identifier, ip_address)
         now = time.time()
+
+        # Every new username/IP pair adds an entry, so prune once per window.
+        if now - self._last_cleanup > self.window_seconds:
+            self.cleanup()
+            self._last_cleanup = now
 
         # Get or create entry
         entry = self._store.get(
@@ -87,8 +93,8 @@ class RateLimiter:
         expired_keys = [
             key
             for key, entry in self._store.items()
-            if (entry["blocked_until"] and now > entry["blocked_until"])
-            or (now - entry["first_request"] > self.window_seconds * 2)
+            if not (entry["blocked_until"] and now < entry["blocked_until"])
+            and now - entry["first_request"] > self.window_seconds
         ]
         for key in expired_keys:
             del self._store[key]
