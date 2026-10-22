@@ -486,9 +486,10 @@ def test_start_docker_daemon_attempts_systemd(tmp_path):
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize("url,expected", [
     ("https://h.io", "admin@h.io"),
-    ("http://host:8000/x/y", "admin@host"),
+    ("http://host:8000/x/y", "admin@example.com"),
+    ("http://localhost:8000", "admin@example.com"),
     ("https://sub.dom.io/path", "admin@sub.dom.io"),
-    ("", "admin@localhost"),
+    ("", "admin@example.com"),
 ])
 def test_default_email_from_url(url, expected):
     r = _bash(f'source "{SETUP}"; default_email_from_url "{url}"')
