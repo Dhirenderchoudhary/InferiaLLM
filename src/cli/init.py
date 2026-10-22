@@ -65,6 +65,9 @@ API_GATEWAY_BOOTSTRAP_SCRIPT = BASE_DIR / "api_gateway" / "bootstrap_db.py"
 MIGRATIONS_DIR = SCHEMA_DIR / "migrations"
 
 
+_MIGRATION_LOCK_ID = 0x1EF1A0  # any fixed int64, shared by every runner
+
+
 async def _apply_migrations(dsn: str):
     """Apply any unapplied SQL migrations from the migrations directory.
 
@@ -85,6 +88,16 @@ async def _apply_migrations(dsn: str):
 
     conn = await asyncpg.connect(dsn)
     try:
+        # Services that boot together all run migrations, so take a lock first.
+        # Poll rather than block in pg_advisory_lock: a session waiting inside
+        # that call holds a snapshot, and a CREATE INDEX CONCURRENTLY chunk in
+        # the lock holder would wait on it forever. Closing the connection
+        # releases the lock.
+        while not await conn.fetchval(
+            "SELECT pg_try_advisory_lock($1)", _MIGRATION_LOCK_ID
+        ):
+            await asyncio.sleep(0.5)
+
         # Create tracking table if it doesn't exist
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS schema_migrations (
