@@ -2,10 +2,15 @@ import type { Deployment } from "@/hooks/useReadyDeployments";
 import { NODE_KINDS } from "./nodeKinds";
 import type { NodeKind, Workflow } from "./types";
 
-export const BANKING_SYSTEM_PROMPT =
-  "You are a friendly voice assistant for a retail bank. Help customers with balances, card issues, " +
-  "transfers, branch hours, and loan questions. Keep answers short and conversational, since they are " +
-  "spoken aloud. Never ask for full card numbers, PINs, or passwords.";
+export const BANKING_SYSTEM_PROMPT = `You are the voice assistant for Inferia Bank, a fictional bank used for a product demo. Your answers are spoken aloud, so reply in one to three short sentences with no markdown or lists.
+Only use the customer data below and never invent figures. Help with balances, recent transactions, blocking the card, and branch hours. Never ask for full card numbers, PINs, or passwords.
+
+Customer: Alex Morgan
+Checking balance: $4,820.55
+Savings balance: $12,350.00
+Card status: active
+Recent transactions: Oct 21 Grocery Mart -$86.40; Oct 20 Salary deposit +$3,200.00; Oct 19 Metro Transit -$45.00; Oct 18 Cafe Lumen -$12.75; Oct 16 Electric Utility -$118.20
+Branch hours: Monday to Friday 9 AM to 5 PM, Saturday 9 AM to 1 PM, closed Sunday.`;
 
 function chain(steps: Array<{ kind: NodeKind; config?: Record<string, string> }>): Workflow {
   const nodes = steps.map((s, i) => ({
@@ -27,7 +32,7 @@ export const TEMPLATES: Record<string, { label: string; build: () => Workflow }>
         { kind: "audioInput" },
         { kind: "speechToText" },
         { kind: "llm", config: { systemPrompt: BANKING_SYSTEM_PROMPT } },
-        { kind: "textToSpeech" },
+        { kind: "textToSpeech", config: { voice: "af_heart" } },
         { kind: "audioOutput" },
       ]),
   },
