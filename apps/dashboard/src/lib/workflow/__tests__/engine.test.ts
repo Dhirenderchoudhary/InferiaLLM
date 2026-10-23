@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { connectionError, runOrder, runWorkflow } from "../engine";
 import { NODE_KINDS } from "../nodeKinds";
 import { BANKING_SYSTEM_PROMPT, TEMPLATES, autofillModels } from "../templates";
-import type { NodeKind, RunContext, Workflow } from "../types";
+import type { NodeKind, NodeRun, RunContext, Workflow } from "../types";
 
 function wf(kinds: Record<string, NodeKind>, edges: Array<[string, string]> = []): Workflow {
   return {
@@ -166,5 +166,31 @@ describe("runWorkflow with the banking voice template", () => {
       baseUrl: "http://x", token: null, fetch: vi.fn() as unknown as typeof fetch, audioInputs: {},
     });
     expect(runs["audioInput-1"]).toMatchObject({ status: "error", error: "Record or upload audio first" });
+  });
+});
+
+describe("runWorkflow timing", () => {
+  it("emits startedAt when a node starts and ms when it finishes", async () => {
+    const workflow = TEMPLATES.textChat.build();
+    workflow.nodes[1].config.model = "llama";
+    const fetchMock = vi.fn(async () => Response.json({ choices: [{ message: { content: "hi" } }] }));
+    const now = vi.spyOn(performance, "now");
+    let clock = 1000;
+    now.mockImplementation(() => (clock += 100));
+    const events: Array<[string, NodeRun]> = [];
+    try {
+      await runWorkflow(
+        workflow,
+        { baseUrl: "http://x", token: null, fetch: fetchMock as unknown as typeof fetch, audioInputs: {} },
+        (id, r) => events.push([id, r]),
+      );
+    } finally {
+      now.mockRestore();
+    }
+    const llm = events.filter(([id, r]) => id === "llm-2" && r.status !== "idle").map(([, r]) => r);
+    expect(llm.map((r) => [r.status, r.startedAt, r.ms])).toEqual([
+      ["running", 1300, undefined],
+      ["done", 1300, 100],
+    ]);
   });
 });

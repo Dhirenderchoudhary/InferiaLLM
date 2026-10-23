@@ -33,6 +33,8 @@ export type NodeStatus = "idle" | "running" | "done" | "error";
 
 export interface NodeRun {
   status: NodeStatus;
+  // performance.now() when the node's own work began, so the UI can tick a live timer.
+  startedAt?: number;
   ms?: number;
   output?: Payload;
   error?: string;

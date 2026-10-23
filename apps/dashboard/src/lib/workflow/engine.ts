@@ -65,8 +65,9 @@ export async function runWorkflow(
   for (const id of order) {
     const node = workflow.nodes.find((n) => n.id === id)!;
     const spec = NODE_KINDS[node.kind];
-    const started = performance.now();
-    update(id, { status: "running" });
+    // Upstream nodes have already finished here, so this measures only this node's own work.
+    const startedAt = performance.now();
+    update(id, { status: "running", startedAt });
     try {
       let input: Payload | null = null;
       if (spec.input) {
@@ -76,11 +77,12 @@ export async function runWorkflow(
       }
       const output = await spec.run(input, node, ctx);
       outputs.set(id, output);
-      update(id, { status: "done", ms: Math.round(performance.now() - started), output });
+      update(id, { status: "done", startedAt, ms: Math.round(performance.now() - startedAt), output });
     } catch (err) {
       update(id, {
         status: "error",
-        ms: Math.round(performance.now() - started),
+        startedAt,
+        ms: Math.round(performance.now() - startedAt),
         error: err instanceof Error ? err.message : String(err),
       });
       break;
