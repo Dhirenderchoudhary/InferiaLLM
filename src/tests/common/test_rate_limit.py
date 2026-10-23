@@ -119,3 +119,29 @@ class TestRateLimiter:
             )
         assert exc_info.value.status_code == 429
         assert "Retry-After" in exc_info.value.headers
+
+
+def test_store_does_not_grow_without_bound():
+    from unittest.mock import patch
+    from common.rate_limit import RateLimiter
+
+    limiter = RateLimiter(max_requests=5, window_seconds=60, block_duration_seconds=300)
+    with patch("common.rate_limit.time.time", return_value=1000.0):
+        for i in range(1000):
+            limiter.is_allowed(f"user{i}", "1.2.3.4")
+    with patch("common.rate_limit.time.time", return_value=1000.0 + 61):
+        limiter.is_allowed("someone", "5.6.7.8")
+    assert len(limiter._store) == 1
+
+
+def test_cleanup_keeps_a_block_that_has_not_expired():
+    from unittest.mock import patch
+    from common.rate_limit import RateLimiter
+
+    limiter = RateLimiter(max_requests=1, window_seconds=60, block_duration_seconds=300)
+    with patch("common.rate_limit.time.time", return_value=1000.0):
+        limiter.is_allowed("victim", "9.9.9.9")
+        assert limiter.is_allowed("victim", "9.9.9.9")[0] is False
+    with patch("common.rate_limit.time.time", return_value=1000.0 + 150):
+        limiter.cleanup()
+        assert limiter.is_allowed("victim", "9.9.9.9")[0] is False
