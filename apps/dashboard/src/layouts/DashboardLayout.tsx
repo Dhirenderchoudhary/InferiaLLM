@@ -24,6 +24,7 @@ import {
   BarChart3,
   Plus,
   FlaskConical,
+  Workflow,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useMemo, useState } from "react";
@@ -36,6 +37,7 @@ const navItems: (NavItem & { permission?: string })[] = [
   { href: "/dashboard/insights", label: "Insights", icon: BarChart3, permission: "deployment:list" },
   { href: "/dashboard/deployments", label: "Deployments", icon: Rocket, permission: "deployment:list" },
   { href: "/dashboard/sandbox", label: "Sandbox", icon: FlaskConical, permission: "deployment:list" },
+  { href: "/dashboard/workflows", label: "Workflows", icon: Workflow, permission: "deployment:list" },
   { href: "/dashboard/compute/pools", label: "Compute Pools", icon: Box, permission: "deployment:list" },
   { href: "/dashboard/models", label: "Models", icon: Boxes, permission: "model:list" },
   { href: "/dashboard/api-keys", label: "API Keys", icon: Key, permission: "api_key:list" },
@@ -56,6 +58,7 @@ const breadcrumbLabels: Record<string, string> = {
   insights: "Insights",
   deployments: "Deployments",
   sandbox: "Sandbox",
+  workflows: "Workflows",
   compute: "Compute",
   nodes: "Nodes",
   pools: "Pools",

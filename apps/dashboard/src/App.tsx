@@ -29,6 +29,7 @@ import ProviderList from "@/pages/Settings/Providers/ProviderList";
 import ProviderConfigPage from "@/pages/Settings/Providers/ProviderConfig";
 import Status from "@/pages/Status";
 import Sandbox from "@/pages/Sandbox";
+import Workflows from "@/pages/Workflows";
 import Models from "@/pages/Models";
 import NewModel from "@/pages/NewModel";
 import Pools from "@/pages/Compute/Pools";
@@ -106,6 +107,10 @@ const router = createBrowserRouter([
               {
                 path: "sandbox",
                 element: <Sandbox />,
+              },
+              {
+                path: "workflows",
+                element: <Workflows />,
               },
               {
                 path: "deployments",
