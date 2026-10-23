@@ -67,6 +67,8 @@ class GatewayService:
             or endpoint.endswith("/videos/generations")
             or endpoint.endswith("/videos/edits")
             or endpoint.endswith("/videos/extensions")
+            or endpoint.endswith("/audio/transcriptions")
+            or endpoint.endswith("/audio/speech")
         ):
             return endpoint
 
@@ -170,6 +172,81 @@ class GatewayService:
             await breaker._record_failure()
             logger.error(f"Streaming Exception: {e}")
             yield _upstream_error(error_sink, 502, "Streaming connection failed")
+
+    @staticmethod
+    async def call_upstream_raw(
+        endpoint_url: str,
+        path: str,
+        headers: Dict,
+        *,
+        json_body: Optional[Dict] = None,
+        files: Optional[Dict] = None,
+        data: Optional[Dict] = None,
+        concurrency_key: str = "default",
+    ) -> httpx.Response:
+        """POST to the upstream and return the read response without parsing
+        it. For multipart uploads and binary bodies, which call_upstream's
+        JSON-in/JSON-out shape can't carry."""
+        full_url = GatewayService._build_full_url(endpoint_url, path)
+        try:
+            full_url = validate_upstream_url(
+                full_url, GatewayService._get_allowed_hosts()
+            )
+            headers = sanitize_headers(headers)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if files:
+            # httpx sets the multipart boundary itself.
+            headers = {k: v for k, v in headers.items() if k.lower() != "content-type"}
+
+        breaker = circuit_breaker_registry.get_or_create(
+            f"upstream:{concurrency_key}",
+            failure_threshold=5,
+            recovery_timeout=30.0,
+            expected_exception=(httpx.HTTPStatusError, httpx.RequestError),
+        )
+        if not await breaker._can_execute():
+            raise HTTPException(
+                status_code=503,
+                detail="Upstream temporarily unavailable (circuit breaker open)",
+            )
+
+        max_bytes = settings.upstream_max_response_bytes
+        client = http_client.get_client()
+        try:
+            async with upstream_concurrency_limiter.limit(concurrency_key):
+                resp = await client.post(
+                    full_url,
+                    json=json_body,
+                    files=files,
+                    data=data,
+                    headers=headers,
+                    timeout=settings.upstream_http_timeout_seconds,
+                )
+                resp.raise_for_status()
+            if len(resp.content) > max_bytes:
+                raise HTTPException(
+                    status_code=502, detail="Upstream response exceeded size limit"
+                )
+            await breaker._record_success()
+            return resp
+        except HTTPException:
+            raise
+        except httpx.HTTPStatusError as e:
+            # A 4xx is about this request, not the upstream's health.
+            if e.response.status_code >= 500:
+                await breaker._record_failure()
+            logger.error(f"Provider error {e.response.status_code}: {e.response.text}")
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail="Upstream provider returned an error",
+            )
+        except Exception as e:
+            await breaker._record_failure()
+            logger.error(f"Provider request failed: {e}")
+            raise HTTPException(
+                status_code=502, detail="Upstream provider is unavailable"
+            )
 
     @staticmethod
     async def call_upstream(

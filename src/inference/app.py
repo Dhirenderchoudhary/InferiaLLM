@@ -289,6 +289,61 @@ async def create_embeddings(
     )
 
 
+@app.post("/v1/audio/transcriptions")
+async def create_transcription(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    authorization: str = Header(None),
+    sandbox: str = Header(None, alias="x-sandbox"),
+):
+    """Speech-to-text endpoint - OpenAI compatible (multipart upload)."""
+    is_sandbox = sandbox.lower() == "true" if sandbox else False
+    api_key = extract_api_key(authorization, is_sandbox)
+    try:
+        form = await request.form()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Expected a multipart form")
+    upload = form.get("file")
+    if upload is None or isinstance(upload, str):
+        raise HTTPException(status_code=400, detail="Model and file are required")
+    fields = {
+        k: v for k, v in form.items() if isinstance(v, str) and k not in ("model", "file")
+    }
+
+    return await OrchestrationService.handle_transcription(
+        api_key=api_key,
+        model=str(form.get("model") or ""),
+        audio=await upload.read(),
+        filename=upload.filename or "audio",
+        content_type=upload.content_type,
+        fields=fields,
+        background_tasks=background_tasks,
+        ip_address=extract_client_ip(request),
+        sandbox=is_sandbox,
+    )
+
+
+@app.post("/v1/audio/speech")
+async def create_speech(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    authorization: str = Header(None),
+    sandbox: str = Header(None, alias="x-sandbox"),
+):
+    """Text-to-speech endpoint - OpenAI compatible. Returns audio bytes."""
+    is_sandbox = sandbox.lower() == "true" if sandbox else False
+    api_key = extract_api_key(authorization, is_sandbox)
+    body = await parse_json_body(request)
+
+    return await OrchestrationService.handle_speech(
+        api_key=api_key,
+        body=body,
+        background_tasks=background_tasks,
+        ip_address=extract_client_ip(request),
+        sandbox=is_sandbox,
+    )
+
+
 @app.post("/v1/images/generations")
 async def create_image(
     request: Request,

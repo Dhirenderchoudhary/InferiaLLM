@@ -78,7 +78,7 @@ class ProviderAdapter(ABC):
         Args:
             request_type: One of 'chat', 'embedding', 'image_generation',
                 'image_edit', 'image_variations', 'video_generation',
-                'video_edit', 'video_extension'.
+                'video_edit', 'video_extension', 'transcription', 'speech'.
         """
         paths = {
             "chat": self.get_chat_path(),
@@ -89,6 +89,8 @@ class ProviderAdapter(ABC):
             "video_generation": "/v1/videos/generations",
             "video_edit": "/v1/videos/edits",
             "video_extension": "/v1/videos/extensions",
+            "transcription": "/v1/audio/transcriptions",
+            "speech": "/v1/audio/speech",
         }
         return paths.get(request_type, self.get_chat_path())
 
