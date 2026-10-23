@@ -184,7 +184,9 @@ default_email_from_url() {
   # admin@<host> derived from the public URL netloc
   local host
   host="$(printf '%s' "$1" | sed -E 's#^[a-zA-Z]+://##; s#[:/].*$##')"
-  printf 'admin@%s' "${host:-localhost}"
+  # The setup helper rejects an address whose domain has no dot.
+  [[ "$host" == *.* ]] || host="example.com"
+  printf 'admin@%s' "$host"
 }
 
 # Read a single value from ENV_FILE (last occurrence; surrounding quotes stripped).
@@ -296,7 +298,7 @@ generate_env() {
   [[ -n "$EXTERNAL_AUTH_URL" ]] && args+=(--external-auth-url "$EXTERNAL_AUTH_URL")
   [[ -n "$OAUTH_CLIENT_ID" ]]   && args+=(--oauth-client-id "$OAUTH_CLIENT_ID")
   [[ -n "$HF_TOKEN" ]]          && args+=(--hf-token "$HF_TOKEN")
-  args+=("${merge_args[@]}")
+  args+=(${merge_args[@]+"${merge_args[@]}"})
 
   local tmp_out tmp_err
   tmp_out="$(mktemp)"; tmp_err="$(mktemp)"
