@@ -17,7 +17,12 @@ class EncryptionService:
             try:
                 self.fernet = Fernet(ENCRYPTION_KEY.encode())
             except Exception as e:
-                print(f"Error initializing encryption: {e}")
+                # Carrying on would store secrets in plaintext.
+                raise ValueError(
+                    "SECRET_ENCRYPTION_KEY is not a valid Fernet key. Generate one with: "
+                    'python -c "from cryptography.fernet import Fernet; '
+                    'print(Fernet.generate_key().decode())"'
+                ) from e
 
     def encrypt_string(self, text: str) -> str:
         if not self.fernet or not text:

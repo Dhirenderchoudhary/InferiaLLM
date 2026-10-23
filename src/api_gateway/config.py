@@ -384,6 +384,14 @@ class Settings(BaseSettings):
                     "Generate a secret with: openssl rand -hex 32"
                 )
 
+        if self.is_production and not self.secret_encryption_key:
+            raise RuntimeError(
+                "FATAL: SECRET_ENCRYPTION_KEY is not set. Without it provider "
+                "credentials are stored in plaintext. Generate one with: "
+                'python -c "from cryptography.fernet import Fernet; '
+                'print(Fernet.generate_key().decode())"'
+            )
+
     @property
     def resolved_redis_url(self) -> str:
         """Resolve a concrete Redis URL.
