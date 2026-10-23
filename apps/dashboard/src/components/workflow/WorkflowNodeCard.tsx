@@ -3,8 +3,10 @@ import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import { CheckCircle2, Loader2, Mic, Square, Upload, X, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NODE_KINDS, type ConfigField } from "@/lib/workflow/nodeKinds";
+import { stats } from "@/lib/workflow/stats";
 import type { NodeKind, NodeRun, Payload } from "@/lib/workflow/types";
 import { useCanvas } from "./canvasContext";
+import { useNow } from "./useNow";
 
 export type FlowNode = Node<{ kind: NodeKind; config: Record<string, string> }, "step">;
 
@@ -27,6 +29,7 @@ export function WorkflowNodeCard({ id, data, selected }: NodeProps<FlowNode>) {
     >
       {spec.input && <Handle type="target" position={Position.Left} className="!h-3 !w-3 !bg-ember-500" />}
       <NodeHeader id={id} label={spec.label} run={run} ports={`${spec.input ?? "-"} -> ${spec.output ?? "-"}`} />
+      <LatencyStats nodeId={id} />
       <div className="space-y-2 p-3">
         {data.kind === "audioInput" && <AudioSource nodeId={id} />}
         {spec.fields.map((field) => (
@@ -54,7 +57,7 @@ function NodeHeader({ id, label, run, ports }: { id: string; label: string; run?
         {run?.status === "running" && <Loader2 className="h-3.5 w-3.5 animate-spin text-ember-500" />}
         {run?.status === "done" && <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />}
         {run?.status === "error" && <XCircle className="h-3.5 w-3.5 text-red-500" />}
-        {run?.ms !== undefined && <span className="font-mono">{run.ms} ms</span>}
+        {run && run.status !== "idle" && <Elapsed run={run} />}
         <button
           type="button"
           aria-label={`Remove ${label}`}
@@ -64,6 +67,30 @@ function NodeHeader({ id, label, run, ports }: { id: string; label: string; run?
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
+    </div>
+  );
+}
+
+function Elapsed({ run }: { run: NodeRun }) {
+  const live = run.status === "running";
+  const now = useNow(live);
+  const ms = live && run.startedAt !== undefined ? Math.max(0, now - run.startedAt) : run.ms;
+  if (ms === undefined) return null;
+  return (
+    <span className={cn("font-mono tabular-nums", live && "text-ember-500")}>{Math.round(ms)} ms</span>
+  );
+}
+
+function LatencyStats({ nodeId }: { nodeId: string }) {
+  const { history } = useCanvas();
+  const s = stats(history[nodeId] ?? []);
+  if (!s) return null;
+  return (
+    <div className="flex justify-between gap-2 border-b px-3 py-1 font-mono text-[10px] tabular-nums text-muted-foreground">
+      <span>last {s.last}</span>
+      <span>p50 {s.p50}</span>
+      <span>p95 {s.p95} ms</span>
+      <span>n={s.count}</span>
     </div>
   );
 }

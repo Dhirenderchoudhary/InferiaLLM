@@ -1,10 +1,12 @@
 import { createContext, useContext } from "react";
 import type { Deployment } from "@/hooks/useReadyDeployments";
+import type { History } from "@/lib/workflow/stats";
 import type { NodeRun } from "@/lib/workflow/types";
 
 export interface CanvasContextValue {
   deployments: Deployment[];
   runs: Record<string, NodeRun>;
+  history: History;
   audioInputs: Record<string, Blob>;
   setConfig: (nodeId: string, key: string, value: string) => void;
   setAudio: (nodeId: string, blob: Blob) => void;

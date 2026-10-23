@@ -18,13 +18,15 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/components/theme-provider";
 import { CanvasContext, type CanvasContextValue } from "@/components/workflow/canvasContext";
+import { RunSummary } from "@/components/workflow/RunSummary";
 import { WorkflowNodeCard, type FlowNode } from "@/components/workflow/WorkflowNodeCard";
 import { useReadyDeployments, type Deployment } from "@/hooks/useReadyDeployments";
 import { INFERENCE_URL } from "@/lib/api";
 import { getToken } from "@/lib/tokenStore";
 import { connectionError, runWorkflow } from "@/lib/workflow/engine";
 import { NODE_KINDS } from "@/lib/workflow/nodeKinds";
-import { deleteWorkflow, loadSavedWorkflows, saveWorkflow } from "@/lib/workflow/storage";
+import { recordRuns } from "@/lib/workflow/stats";
+import { deleteWorkflow, loadHistory, loadSavedWorkflows, saveHistory, saveWorkflow } from "@/lib/workflow/storage";
 import { TEMPLATES, autofillModels } from "@/lib/workflow/templates";
 import type { NodeKind, NodeRun, Workflow } from "@/lib/workflow/types";
 
@@ -78,6 +80,8 @@ function Canvas({ deployments }: { deployments: Deployment[] }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initial.edges);
   const [runs, setRuns] = useState<Record<string, NodeRun>>({});
+  const [history, setHistory] = useState(loadHistory);
+  const [timing, setTiming] = useState<{ startedAt: number; endedAt: number | null } | null>(null);
   const [audioInputs, setAudioInputs] = useState<Record<string, Blob>>({});
   const [running, setRunning] = useState(false);
   const [saved, setSaved] = useState(loadSavedWorkflows);
@@ -91,6 +95,9 @@ function Canvas({ deployments }: { deployments: Deployment[] }) {
       setEdges(flow.edges);
       setRuns({});
       setAudioInputs({});
+      setTiming(null);
+      setHistory({});
+      saveHistory({});
       requestAnimationFrame(() => fitView({ padding: 0.2 }));
     },
     [setNodes, setEdges, fitView],
@@ -99,15 +106,24 @@ function Canvas({ deployments }: { deployments: Deployment[] }) {
   const run = async (inputs = audioInputs) => {
     if (running) return;
     setRunning(true);
+    const startedAt = performance.now();
+    setTiming({ startedAt, endedAt: null });
     try {
       const results = await runWorkflow(
         fromFlow(nodes, edges),
         { baseUrl: INFERENCE_URL, token: getToken(), fetch: window.fetch.bind(window), audioInputs: inputs },
         (id, r) => setRuns((prev) => ({ ...prev, [id]: r })),
       );
+      setTiming({ startedAt, endedAt: performance.now() });
+      setHistory((prev) => {
+        const next = recordRuns(prev, results);
+        saveHistory(next);
+        return next;
+      });
       const failed = Object.values(results).find((r) => r.status === "error");
       if (failed) toast.error(failed.error);
     } catch (err) {
+      setTiming(null);
       toast.error(err instanceof Error ? err.message : "Run failed");
     } finally {
       setRunning(false);
@@ -139,6 +155,7 @@ function Canvas({ deployments }: { deployments: Deployment[] }) {
   const ctx: CanvasContextValue = {
     deployments,
     runs,
+    history,
     audioInputs,
     setConfig: (nodeId, key, value) =>
       setNodes((prev) =>
@@ -242,7 +259,8 @@ function Canvas({ deployments }: { deployments: Deployment[] }) {
       </aside>
 
       <div className="relative min-h-[420px] flex-1 overflow-hidden rounded-xl border bg-card shadow-sm" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
-        <div className="absolute right-3 top-3 z-10 flex gap-2">
+        <div className="absolute right-3 top-3 z-10 flex items-start gap-2">
+          {timing && <RunSummary workflow={fromFlow(nodes, edges)} runs={runs} {...timing} />}
           <Button variant="outline" size="sm" onClick={() => loadWorkflow({ nodes: [], edges: [] })}>
             Clear
           </Button>

@@ -1,3 +1,4 @@
+import type { History } from "./stats";
 import type { Workflow } from "./types";
 
 const KEY = "inferia.workflows";
@@ -28,4 +29,23 @@ export function deleteWorkflow(name: string): boolean {
   const all = loadSavedWorkflows();
   delete all[name];
   return write(all);
+}
+
+const HISTORY_KEY = "inferia.workflow.latency";
+
+export function loadHistory(): History {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? "{}");
+    return parsed && typeof parsed === "object" ? (parsed as History) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveHistory(history: History): void {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  } catch {
+    // Latency history is a convenience; losing it is fine.
+  }
 }
