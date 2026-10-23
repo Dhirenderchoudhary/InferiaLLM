@@ -26,7 +26,11 @@ env:
   REGISTRY_IMAGE: ghcr.io/inferiaai/inferiallm
 
 jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
   build-and-push:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
