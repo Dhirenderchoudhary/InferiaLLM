@@ -98,3 +98,20 @@ async def test_call_client_errors_do_not_open_breaker(service):
             await GatewayService.call_upstream(URL, {"model": "m"}, {}, concurrency_key=key)
         assert exc.value.status_code == 400
     assert _breaker(key).state == CircuitState.CLOSED
+
+
+@pytest.mark.asyncio
+async def test_stream_error_body_that_fails_to_read_still_yields_error(service):
+    key = f"k-{uuid.uuid4()}"
+
+    async def broken_body():
+        yield b'{"error": "partial'
+        raise httpx.ReadError("connection dropped")
+
+    def handler(request):
+        return httpx.Response(500, content=broken_body())
+
+    service.get_client.return_value = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    body = await _stream(key)
+
+    assert b"Upstream provider returned an error" in body
