@@ -19,7 +19,7 @@ export function WorkflowNodeCard({ id, data, selected }: NodeProps<FlowNode>) {
   return (
     <div
       className={cn(
-        "w-72 rounded-xl border bg-card text-card-foreground shadow-sm",
+        "w-60 rounded-xl border bg-card text-card-foreground shadow-sm",
         selected && "ring-2 ring-ember-500",
         run?.status === "running" && "border-ember-500",
         run?.status === "error" && "border-red-500",

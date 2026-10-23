@@ -266,6 +266,7 @@ function Canvas({ deployments }: { deployments: Deployment[] }) {
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
             isValidConnection={isValidConnection}
+            defaultEdgeOptions={{ type: "smoothstep" }}
             colorMode={theme}
             fitView
             fitViewOptions={{ padding: 0.2 }}

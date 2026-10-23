@@ -11,7 +11,8 @@ function chain(steps: Array<{ kind: NodeKind; config?: Record<string, string> }>
   const nodes = steps.map((s, i) => ({
     id: `${s.kind}-${i + 1}`,
     kind: s.kind,
-    position: { x: i * 320, y: 0 },
+    // Wrap after three columns so the voice pipeline stays legible at fit-view zoom.
+    position: { x: (i % 3) * 270, y: Math.floor(i / 3) * 360 },
     config: s.config ?? {},
   }));
   const edges = nodes.slice(1).map((n, i) => ({ id: `e-${nodes[i].id}-${n.id}`, source: nodes[i].id, target: n.id }));
