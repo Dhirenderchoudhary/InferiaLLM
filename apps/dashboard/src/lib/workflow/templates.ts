@@ -1,5 +1,5 @@
 import type { Deployment } from "@/hooks/useReadyDeployments";
-import { NODE_KINDS } from "./nodeKinds";
+import { NODE_KINDS, matchingDeployments } from "./nodeKinds";
 import type { NodeKind, Workflow } from "./types";
 
 export const BANKING_SYSTEM_PROMPT = `You are the voice assistant for Inferia Bank, a fictional bank used for a product demo. Your answers are spoken aloud, so reply in one to three short sentences with no markdown or lists.
@@ -47,7 +47,7 @@ export const TEMPLATES: Record<string, { label: string; build: () => Workflow }>
   },
 };
 
-// Fill empty model fields with the first ready deployment of the matching type.
+// Fill empty model fields with the first matching ready deployment.
 export function autofillModels(workflow: Workflow, deployments: Deployment[]): Workflow {
   return {
     ...workflow,
@@ -55,8 +55,7 @@ export function autofillModels(workflow: Workflow, deployments: Deployment[]): W
       const config = { ...node.config };
       for (const field of NODE_KINDS[node.kind].fields) {
         if (field.type !== "model" || config[field.key]) continue;
-        const candidates = deployments.filter((d) => d.model_type === field.modelType && d.modelName !== "-");
-        const match = candidates.find((d) => field.prefer?.test(d.modelName)) ?? candidates[0];
+        const match = matchingDeployments(field, deployments)[0];
         if (match) config[field.key] = match.modelName;
       }
       return { ...node, config };

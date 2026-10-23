@@ -1,3 +1,4 @@
+import type { Deployment } from "@/hooks/useReadyDeployments";
 import { parseThinking } from "@/lib/parseThinking";
 import type { NodeKind, Payload, PortType, RunContext, WorkflowNode } from "./types";
 
@@ -10,7 +11,14 @@ export type ConfigField =
       // STT and TTS share the audio_generation model_type, so the name is the only hint for auto-selection.
       prefer?: RegExp;
     }
-  | { key: string; label: string; type: "text" | "textarea"; placeholder?: string };
+  | {
+      key: string;
+      label: string;
+      type: "text" | "textarea";
+      placeholder?: string;
+      // Values that only make sense for one deployment (voice ids) are left to the user, not the planner.
+      deploymentSpecific?: boolean;
+    };
 
 export interface NodeKindSpec {
   label: string;
@@ -50,9 +58,19 @@ function requireModel(node: WorkflowNode): string {
   return model;
 }
 
+const DEFAULT_VOICE = "af_heart";
+
 function audioFileName(blob: Blob): string {
   const subtype = blob.type.split("/")[1]?.split(";")[0];
   return `audio.${subtype === "mpeg" ? "mp3" : subtype || "webm"}`;
+}
+
+// Deployments a model field can use. STT and TTS share a model_type, so a field with a name hint only takes
+// matching names: binding a TTS model to an STT node would fail at run time.
+export function matchingDeployments(field: Extract<ConfigField, { type: "model" }>, deployments: Deployment[]): Deployment[] {
+  return deployments.filter(
+    (d) => d.model_type === field.modelType && d.modelName !== "-" && (!field.prefer || field.prefer.test(d.modelName)),
+  );
 }
 
 export const NODE_KINDS: Record<NodeKind, NodeKindSpec> = {
@@ -145,14 +163,15 @@ export const NODE_KINDS: Record<NodeKind, NodeKindSpec> = {
         modelType: "audio_generation",
         prefer: /tts|speech|kokoro|voice|bark|piper|orpheus/i,
       },
-      { key: "voice", label: "Voice", type: "text", placeholder: "default" },
+      { key: "voice", label: "Voice", type: "text", placeholder: DEFAULT_VOICE, deploymentSpecific: true },
     ],
     run: async (input, node, ctx) => {
       const text = expectText(input);
-      const voice = node.config.voice?.trim();
+      // The speech API rejects a missing voice; af_heart is Kokoro's default and Piper ignores the name.
+      const voice = node.config.voice?.trim() || DEFAULT_VOICE;
       const res = await inference(ctx, "/v1/audio/speech", {
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: requireModel(node), input: text, ...(voice ? { voice } : {}) }),
+        body: JSON.stringify({ model: requireModel(node), input: text, voice }),
       });
       return { type: "audio", blob: await res.blob() };
     },
