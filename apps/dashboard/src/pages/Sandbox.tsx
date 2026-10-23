@@ -27,31 +27,7 @@ import { getToken } from "@/lib/tokenStore";
 import { ChatInterface } from "@/components/sandbox/ChatInterface";
 import { useSandboxChat } from "@/hooks/useSandboxChat";
 import type { ChatMessage } from "@/lib/sandboxChatStore";
-
-interface Deployment {
-  id: string;
-  name: string;
-  modelName: string;
-  model_type: string;
-  engine?: string;
-  workload_type?: string;
-  endpointUrl: string;
-  status: string;
-}
-
-interface DeploymentResponse {
-  deployments: Array<{
-    deployment_id: string;
-    model_name?: string;
-    engine?: string;
-    endpoint?: string;
-    state?: string;
-    model_type?: string;
-    configuration?: {
-      workload_type?: string;
-    };
-  }>;
-}
+import { useReadyDeployments, type Deployment } from "@/hooks/useReadyDeployments";
 
 type ModelCategory = "inference" | "embedding" | "image" | "video";
 
@@ -116,25 +92,7 @@ const STYLES = [
 export default function Sandbox() {
   const [selectedDeploymentId, setSelectedDeploymentId] = useState<string | null>(null);
 
-  const { data: deployments = [], isLoading } = useQuery<Deployment[]>({
-    queryKey: ["sandbox-deployments"],
-    queryFn: async () => {
-      const res = await computeApi.get<DeploymentResponse>("/deployment/deployments");
-      return (res.data.deployments || [])
-        .filter((d) => d.state === "READY" || d.state === "RUNNING")
-        .map((d) => ({
-          id: d.deployment_id,
-          name: d.model_name || `Deployment-${(d.deployment_id || "").slice(0, 8)}`,
-          modelName: d.model_name || "-",
-          model_type: d.model_type || "inference",
-          engine: d.engine,
-          workload_type: d.configuration?.workload_type,
-          endpointUrl: d.endpoint || "",
-          status: d.state || "UNKNOWN",
-        }));
-    },
-    staleTime: 30000,
-  });
+  const { data: deployments = [], isLoading } = useReadyDeployments();
 
   const { data: deploymentDetails } = useQuery({
     queryKey: ["deployment-details", selectedDeploymentId],
