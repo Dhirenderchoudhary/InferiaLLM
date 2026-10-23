@@ -165,9 +165,14 @@ class GatewayService:
             # A 4xx is about this request, not the upstream's health.
             if e.response.status_code >= 500:
                 await breaker._record_failure()
-            await e.response.aread()
-            await e.response.aclose()
-            logger.error(f"Upstream Error {e.response.status_code}: {e.response.text}")
+            try:
+                await e.response.aread()
+                body = e.response.text[:500]
+            except httpx.HTTPError:
+                body = "<unreadable>"
+            finally:
+                await e.response.aclose()
+            logger.error(f"Upstream Error {e.response.status_code}: {body}")
             yield _upstream_error(
                 error_sink, 502, "Upstream provider returned an error"
             )
