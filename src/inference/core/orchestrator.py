@@ -9,6 +9,7 @@ import logging
 
 from inference.client import api_gateway_client
 from .handlers import (
+    AudioHandler,
     CompletionHandler,
     EmbeddingHandler,
     ImageHandler,
@@ -50,6 +51,10 @@ class OrchestrationService:
     handle_image_generation = ImageHandler.handle_generation
     handle_image_edit = ImageHandler.handle_edit
     handle_image_variations = ImageHandler.handle_variations
+
+    # --- Audio ---
+    handle_transcription = AudioHandler.handle_transcription
+    handle_speech = AudioHandler.handle_speech
 
     # --- Video ---
     handle_video_generation = VideoHandler.handle_generation
