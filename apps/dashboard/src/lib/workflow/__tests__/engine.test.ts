@@ -79,6 +79,20 @@ describe("autofillModels", () => {
     ]);
     expect(filled.nodes.map((n) => n.config.model ?? null)).toEqual([null, "whisper-small", "llama-3-8b", "kokoro-tts", null]);
   });
+
+  const audio = (modelName: string) => ({
+    id: modelName, name: modelName, modelName, model_type: "audio_generation", endpointUrl: "", status: "READY",
+  });
+
+  it("does not give TTS an STT model whose name mentions speech", () => {
+    const filled = autofillModels(TEMPLATES.bankingVoice.build(), [audio("Speech Recognition"), audio("Kokoro")]);
+    expect(filled.nodes.map((n) => n.config.model ?? null)).toEqual([null, "Speech Recognition", null, "Kokoro", null]);
+  });
+
+  it("gives STT and TTS different deployments when no name matches", () => {
+    const filled = autofillModels(TEMPLATES.bankingVoice.build(), [audio("model-a"), audio("model-b")]);
+    expect(filled.nodes.map((n) => n.config.model ?? null)).toEqual([null, "model-a", null, "model-b", null]);
+  });
 });
 
 describe("runWorkflow with the banking voice template", () => {

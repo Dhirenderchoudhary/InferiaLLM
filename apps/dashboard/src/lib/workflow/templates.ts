@@ -49,6 +49,10 @@ export const TEMPLATES: Record<string, { label: string; build: () => Workflow }>
 
 // Fill empty model fields with the first ready deployment of the matching type.
 export function autofillModels(workflow: Workflow, deployments: Deployment[]): Workflow {
+  // STT and TTS share a model_type, so a deployment given to one node isn't offered to the other.
+  const used = new Set(
+    workflow.nodes.flatMap((n) => NODE_KINDS[n.kind].fields.filter((f) => f.type === "model").map((f) => n.config[f.key])),
+  );
   return {
     ...workflow,
     nodes: workflow.nodes.map((node) => {
@@ -56,8 +60,12 @@ export function autofillModels(workflow: Workflow, deployments: Deployment[]): W
       for (const field of NODE_KINDS[node.kind].fields) {
         if (field.type !== "model" || config[field.key]) continue;
         const candidates = deployments.filter((d) => d.model_type === field.modelType && d.modelName !== "-");
-        const match = candidates.find((d) => field.prefer?.test(d.modelName)) ?? candidates[0];
-        if (match) config[field.key] = match.modelName;
+        const unused = candidates.filter((d) => !used.has(d.modelName));
+        const match = unused.find((d) => field.prefer?.test(d.modelName)) ?? unused[0] ?? (field.prefer ? undefined : candidates[0]);
+        if (match) {
+          config[field.key] = match.modelName;
+          used.add(match.modelName);
+        }
       }
       return { ...node, config };
     }),

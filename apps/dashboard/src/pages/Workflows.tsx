@@ -104,7 +104,10 @@ function Canvas({ deployments }: { deployments: Deployment[] }) {
   );
 
   const run = async (inputs = audioInputs) => {
-    if (running) return;
+    if (running) {
+      toast.info("A run is already in progress");
+      return;
+    }
     setRunning(true);
     const startedAt = performance.now();
     setTiming({ startedAt, endedAt: null });
