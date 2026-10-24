@@ -8,6 +8,7 @@ import axios from 'axios';
 import { getAkashTypeRegistry } from "@akashnetwork/akashjs/build/stargate";
 
 const RPC_ENDPOINT = process.env.AKASH_NODE || "https://rpc.akash.forbole.com:443";
+const REST_ENDPOINT = process.env.AKASH_API || "https://api.akashnet.net";
 
 export class AkashService {
     private wallet: DirectSecp256k1HdWallet | null = null;
@@ -126,7 +127,7 @@ export class AkashService {
     }
 
     async fetchBids(dseq: string): Promise<any[]> {
-        const url = `https://api.akashnet.net/akash/market/v1beta4/bids/list?filters.owner=${this.address}&filters.dseq=${dseq}&filters.state=open`;
+        const url = `${REST_ENDPOINT}/akash/market/v1beta4/bids/list?filters.owner=${this.address}&filters.dseq=${dseq}&filters.state=open`;
         try {
             const res = await axios.get(url);
             return res.data.bids || [];
@@ -134,6 +135,14 @@ export class AkashService {
             console.error("Error fetching bids", e);
             return [];
         }
+    }
+
+    // "active" or "closed", as the chain reports it.
+    async getDeploymentStatus(dseq: string): Promise<{ state: string }> {
+        if (!this.address) throw new Error("Akash SDK not initialized (check mnemonic)");
+        const url = `${REST_ENDPOINT}/akash/deployment/v1beta3/deployments/info?id.owner=${this.address}&id.dseq=${encodeURIComponent(dseq)}`;
+        const res = await axios.get(url);
+        return { state: res.data?.deployment?.state || "unknown" };
     }
 
     async sendManifest(sdl: SDL, dseq: string, provider: string) {

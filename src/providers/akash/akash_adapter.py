@@ -299,6 +299,32 @@ class AkashAdapter(ProviderAdapter):
 
             await asyncio.sleep(poll_interval)
 
+    async def get_node_status(
+        self,
+        *,
+        provider_instance_id: str,
+        provider_credential_name: Optional[str] = None,
+    ) -> str:
+        """Chain state of the deployment: RUNNING while active, STOPPED once
+        closed, ``"unknown"`` on any error so liveness never acts on a guess."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{AKASH_SIDECAR_URL}/deployments/status/{provider_instance_id}",
+                    headers=internal_headers,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
+                    if resp.status != 200:
+                        return "unknown"
+                    state = (await resp.json()).get("state")
+        except Exception:
+            logger.warning(
+                "Akash get_node_status failed for %s", provider_instance_id,
+                exc_info=True,
+            )
+            return "unknown"
+        return {"active": "RUNNING", "closed": "STOPPED"}.get(state, "unknown")
+
     async def deprovision_node(
         self,
         *,

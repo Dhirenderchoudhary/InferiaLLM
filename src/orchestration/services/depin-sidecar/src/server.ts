@@ -304,6 +304,15 @@ akashRouter.post('/deployments/close', async (req, res) => {
     }
 });
 
+akashRouter.get('/deployments/status/:id', async (req, res) => {
+    try {
+        res.json(await akashService.getDeploymentStatus(req.params.id));
+    } catch (error: any) {
+        const status = error.response?.status === 404 ? 404 : 502;
+        res.status(status).json({ error: error.message });
+    }
+});
+
 akashRouter.get('/deployments/:id/logs', async (req, res) => {
     try {
         const logs = await akashService.getLogs(req.params.id);
