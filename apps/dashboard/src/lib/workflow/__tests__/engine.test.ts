@@ -80,6 +80,13 @@ describe("autofillModels", () => {
     expect(filled.nodes.map((n) => n.config.model ?? null)).toEqual([null, "whisper-small", "llama-3-8b", "kokoro-tts", null]);
   });
 
+  it("leaves a model empty rather than binding a deployment for the other audio direction", () => {
+    const filled = autofillModels(TEMPLATES.bankingVoice.build(), [
+      { id: "k", name: "kokoro-tts", modelName: "kokoro-tts", model_type: "audio_generation", endpointUrl: "", status: "READY" },
+    ]);
+    expect(filled.nodes.map((n) => n.config.model ?? null)).toEqual([null, null, null, "kokoro-tts", null]);
+  });
+
   const audio = (modelName: string) => ({
     id: modelName, name: modelName, modelName, model_type: "audio_generation", endpointUrl: "", status: "READY",
   });
@@ -89,9 +96,9 @@ describe("autofillModels", () => {
     expect(filled.nodes.map((n) => n.config.model ?? null)).toEqual([null, "Speech Recognition", null, "Kokoro", null]);
   });
 
-  it("gives STT and TTS different deployments when no name matches", () => {
+  it("leaves STT and TTS empty when no name matches", () => {
     const filled = autofillModels(TEMPLATES.bankingVoice.build(), [audio("model-a"), audio("model-b")]);
-    expect(filled.nodes.map((n) => n.config.model ?? null)).toEqual([null, "model-a", null, "model-b", null]);
+    expect(filled.nodes.map((n) => n.config.model ?? null)).toEqual([null, null, null, null, null]);
   });
 });
 

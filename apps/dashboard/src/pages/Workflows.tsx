@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type DragEvent } from "react";
+import { useCallback, useMemo, useRef, useState, type DragEvent } from "react";
 import {
   Background,
   Controls,
@@ -18,13 +18,16 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/components/theme-provider";
 import { CanvasContext, type CanvasContextValue } from "@/components/workflow/canvasContext";
+import { DescribeWorkflow } from "@/components/workflow/DescribeWorkflow";
 import { RunSummary } from "@/components/workflow/RunSummary";
+import { useNodeDeploys } from "@/components/workflow/useNodeDeploys";
 import { WorkflowNodeCard, type FlowNode } from "@/components/workflow/WorkflowNodeCard";
 import { useReadyDeployments, type Deployment } from "@/hooks/useReadyDeployments";
 import { INFERENCE_URL } from "@/lib/api";
 import { getToken } from "@/lib/tokenStore";
 import { connectionError, runWorkflow } from "@/lib/workflow/engine";
 import { NODE_KINDS } from "@/lib/workflow/nodeKinds";
+import { MODEL_CATALOG, nodeReadiness, runBlocker } from "@/lib/workflow/readiness";
 import { recordRuns } from "@/lib/workflow/stats";
 import { deleteWorkflow, loadHistory, loadSavedWorkflows, saveHistory, saveWorkflow } from "@/lib/workflow/storage";
 import { TEMPLATES, autofillModels } from "@/lib/workflow/templates";
@@ -73,8 +76,11 @@ export default function Workflows() {
   );
 }
 
-function Canvas({ deployments }: { deployments: Deployment[] }) {
+function Canvas({ deployments: initialDeployments }: { deployments: Deployment[] }) {
   const { theme } = useTheme();
+  const { pending, deploy, clear, reset } = useNodeDeploys();
+  const deploying = Object.values(pending).some((p) => p.status === "deploying");
+  const { data: deployments = initialDeployments } = useReadyDeployments(deploying ? 5000 : false);
   const { screenToFlowPosition, deleteElements, fitView } = useReactFlow<FlowNode>();
   const [initial] = useState(() => toFlow(autofillModels(TEMPLATES.bankingVoice.build(), deployments)));
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(initial.nodes);
@@ -88,6 +94,27 @@ function Canvas({ deployments }: { deployments: Deployment[] }) {
   const [name, setName] = useState("");
   const counter = useRef(0);
 
+  const readiness = useMemo(
+    () => Object.fromEntries(nodes.map((n) => [n.id, nodeReadiness(n.data, deployments, pending[n.id])])),
+    [nodes, deployments, pending],
+  );
+  const blocker = runBlocker(fromFlow(nodes, edges), deployments, pending);
+
+  const setConfig = useCallback(
+    (nodeId: string, key: string, value: string) =>
+      setNodes((prev) =>
+        prev.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, config: { ...n.data.config, [key]: value } } } : n)),
+      ),
+    [setNodes],
+  );
+
+  // A node's own deployment came up: select it during render so the node is ready on this same pass.
+  for (const [id, r] of Object.entries(readiness)) {
+    if (r.state !== "deployed") continue;
+    setConfig(id, "model", r.model);
+    clear(id);
+  }
+
   const loadWorkflow = useCallback(
     (workflow: Workflow) => {
       const flow = toFlow(workflow);
@@ -98,9 +125,10 @@ function Canvas({ deployments }: { deployments: Deployment[] }) {
       setTiming(null);
       setHistory({});
       saveHistory({});
+      reset();
       requestAnimationFrame(() => fitView({ padding: 0.2 }));
     },
-    [setNodes, setEdges, fitView],
+    [setNodes, setEdges, fitView, reset],
   );
 
   const run = async (inputs = audioInputs) => {
@@ -108,6 +136,7 @@ function Canvas({ deployments }: { deployments: Deployment[] }) {
       toast.info("A run is already in progress");
       return;
     }
+    if (blocker) return void toast.error(blocker);
     setRunning(true);
     const startedAt = performance.now();
     setTiming({ startedAt, endedAt: null });
@@ -160,16 +189,19 @@ function Canvas({ deployments }: { deployments: Deployment[] }) {
     runs,
     history,
     audioInputs,
-    setConfig: (nodeId, key, value) =>
-      setNodes((prev) =>
-        prev.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, config: { ...n.data.config, [key]: value } } } : n)),
-      ),
+    readiness,
+    setConfig,
     setAudio: (nodeId, blob) => {
       const next = { ...audioInputs, [nodeId]: blob };
       setAudioInputs(next);
       void run(next);
     },
     removeNode: (nodeId) => void deleteElements({ nodes: [{ id: nodeId }] }),
+    deploy: (nodeId) => {
+      const kind = nodes.find((n) => n.id === nodeId)?.data.kind;
+      const entry = kind && MODEL_CATALOG[kind];
+      if (entry) void deploy(nodeId, entry);
+    },
   };
 
   const onSave = () => {
@@ -183,6 +215,8 @@ function Canvas({ deployments }: { deployments: Deployment[] }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
       <aside className="flex shrink-0 flex-col gap-4 overflow-y-auto rounded-xl border bg-card p-3 shadow-sm lg:w-60">
+        <DescribeWorkflow deployments={deployments} onGenerated={(w) => loadWorkflow(autofillModels(w, deployments))} />
+
         <section className="space-y-2">
           <h3 className="text-xs font-medium uppercase text-muted-foreground">Templates</h3>
           {Object.entries(TEMPLATES).map(([key, t]) => (
@@ -267,7 +301,12 @@ function Canvas({ deployments }: { deployments: Deployment[] }) {
           <Button variant="outline" size="sm" onClick={() => loadWorkflow({ nodes: [], edges: [] })}>
             Clear
           </Button>
-          <Button size="sm" onClick={() => void run()} disabled={running || nodes.length === 0}>
+          {blocker && !running && (
+            <span className="max-w-64 truncate rounded-md border bg-card px-2 py-1.5 text-xs text-muted-foreground" title={blocker}>
+              {blocker}
+            </span>
+          )}
+          <Button size="sm" onClick={() => void run()} disabled={running || nodes.length === 0 || blocker !== null} title={blocker ?? undefined}>
             {running ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Play className="mr-1.5 h-4 w-4" />}
             Run
           </Button>

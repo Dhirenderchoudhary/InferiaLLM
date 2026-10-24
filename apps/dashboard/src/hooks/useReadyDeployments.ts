@@ -26,7 +26,8 @@ interface DeploymentResponse {
   }>;
 }
 
-export function useReadyDeployments() {
+// Pass a refetch interval to poll while a deployment is coming up.
+export function useReadyDeployments(refetchInterval: number | false = false) {
   return useQuery<Deployment[]>({
     queryKey: ["sandbox-deployments"],
     queryFn: async () => {
@@ -45,5 +46,6 @@ export function useReadyDeployments() {
         }));
     },
     staleTime: 30000,
+    refetchInterval,
   });
 }

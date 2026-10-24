@@ -20,6 +20,7 @@ function canvas(setAudio: CanvasContextValue["setAudio"]): CanvasContextValue {
   return {
     deployments: [], runs: {}, history: {}, audioInputs: {},
     setConfig: () => {}, setAudio, removeNode: () => {},
+    readiness: {}, deploy: () => {},
   };
 }
 

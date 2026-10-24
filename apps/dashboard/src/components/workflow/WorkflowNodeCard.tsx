@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import { CheckCircle2, Loader2, Mic, Square, Upload, X, XCircle } from "lucide-react";
+import { CheckCircle2, CloudUpload, Loader2, Mic, Square, Upload, X, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NODE_KINDS, type ConfigField } from "@/lib/workflow/nodeKinds";
+import type { Readiness } from "@/lib/workflow/readiness";
 import { stats } from "@/lib/workflow/stats";
 import type { NodeKind, NodeRun, Payload } from "@/lib/workflow/types";
 import { useCanvas } from "./canvasContext";
@@ -15,8 +16,9 @@ const inputClass =
 
 export function WorkflowNodeCard({ id, data, selected }: NodeProps<FlowNode>) {
   const spec = NODE_KINDS[data.kind];
-  const { runs } = useCanvas();
+  const { runs, readiness } = useCanvas();
   const run = runs[id];
+  const ready = readiness[id];
 
   return (
     <div
@@ -25,11 +27,13 @@ export function WorkflowNodeCard({ id, data, selected }: NodeProps<FlowNode>) {
         selected && "ring-2 ring-ember-500",
         run?.status === "running" && "border-ember-500",
         run?.status === "error" && "border-red-500",
+        !run && ready && ready.state !== "ready" && ready.state !== "selectModel" && "border-amber-500/70",
       )}
     >
       {spec.input && <Handle type="target" position={Position.Left} className="!h-3 !w-3 !bg-ember-500" />}
       <NodeHeader id={id} label={spec.label} run={run} ports={`${spec.input ?? "-"} -> ${spec.output ?? "-"}`} />
       <LatencyStats nodeId={id} />
+      {ready && <ReadinessBanner nodeId={id} readiness={ready} />}
       <div className="space-y-2 p-3">
         {data.kind === "audioInput" && <AudioSource nodeId={id} />}
         {spec.fields.map((field) => (
@@ -78,6 +82,39 @@ function Elapsed({ run }: { run: NodeRun }) {
   if (ms === undefined) return null;
   return (
     <span className={cn("font-mono tabular-nums", live && "text-ember-500")}>{Math.round(ms)} ms</span>
+  );
+}
+
+function ReadinessBanner({ nodeId, readiness }: { nodeId: string; readiness: Readiness }) {
+  const { deploy } = useCanvas();
+  if (readiness.state === "ready" || readiness.state === "selectModel" || readiness.state === "deployed") return null;
+  const { recommended } = readiness;
+  return (
+    <div className="space-y-1.5 border-b bg-amber-500/5 px-3 py-2 text-[11px]">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium text-amber-600 dark:text-amber-400">
+          {readiness.state === "needsDeployment" && "Needs deployment"}
+          {readiness.state === "deploying" && "Deploying..."}
+          {readiness.state === "waiting" && "Waiting for compute"}
+        </span>
+        {readiness.state === "deploying" ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500" />
+        ) : (
+          <button
+            type="button"
+            onClick={() => deploy(nodeId)}
+            className="nodrag flex items-center gap-1 rounded-md bg-ember-600 px-2 py-0.5 font-medium text-white hover:bg-ember-700"
+          >
+            <CloudUpload className="h-3 w-3" />
+            {readiness.state === "waiting" ? "Retry" : "Deploy"}
+          </button>
+        )}
+      </div>
+      <div className="text-muted-foreground">
+        Recommended <span className="font-mono text-foreground">{recommended.modelId}</span> on {recommended.engine}
+      </div>
+      {readiness.state === "waiting" && <p className="break-words text-red-500">{readiness.reason}</p>}
+    </div>
   );
 }
 
