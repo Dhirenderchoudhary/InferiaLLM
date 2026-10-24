@@ -67,7 +67,7 @@ describe("validatePlan", () => {
     const { workflow, errors } = validatePlan({
       nodes: [
         { id: "a", kind: "audioInput" },
-        { id: "b", kind: "videoInput" },
+        { id: "b", kind: "hologram" },
         { id: "c", kind: "textOutput" },
         { id: "c", kind: "llm" },
         { id: "d", kind: "speechToText" },
@@ -83,7 +83,7 @@ describe("validatePlan", () => {
     expect(kinds(workflow)).toEqual(["audioInput", "textOutput", "speechToText"]);
     expect(pairs(workflow)).toEqual(["a>d", "d>c"]);
     expect(errors).toEqual([
-      'Unknown node kind "videoInput"',
+      'Unknown node kind "hologram"',
       'Duplicate node id "c"',
       "a -> c: Cannot connect audio output to text input",
       "a -> b: Unknown node",

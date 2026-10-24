@@ -16,10 +16,10 @@ class FakeRecorder {
   }
 }
 
-function canvas(setAudio: CanvasContextValue["setAudio"]): CanvasContextValue {
+function canvas(setInput: CanvasContextValue["setInput"]): CanvasContextValue {
   return {
-    deployments: [], runs: {}, history: {}, audioInputs: {},
-    setConfig: () => {}, setAudio, removeNode: () => {},
+    deployments: [], runs: {}, history: {}, inputs: {},
+    setConfig: () => {}, setInput, removeNode: () => {},
     readiness: {}, deploy: () => {},
   };
 }
@@ -45,13 +45,13 @@ describe("AudioSource recording", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("hands the recording to the current setAudio, not the one from when Record was clicked", async () => {
+  it("hands the recording to the current setInput, not the one from when Record was clicked", async () => {
     const atRecord = vi.fn();
     const current = vi.fn();
     const { rerender } = render(card(canvas(atRecord)));
 
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Record" })));
-    // A re-render while recording gives a new setAudio (with the latest run state).
+    // A re-render while recording gives a new setInput (with the latest run state).
     rerender(card(canvas(current)));
     fireEvent.click(screen.getByRole("button", { name: "Stop and run" }));
 

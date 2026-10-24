@@ -1,5 +1,6 @@
 import type { Deployment } from "@/hooks/useReadyDeployments";
 import { parseThinking } from "@/lib/parseThinking";
+import { base64ToBlob, extractFrames, toJpegDataUrl } from "./media";
 import type { NodeKind, Payload, PortType, RunContext, WorkflowNode } from "./types";
 
 export type ConfigField =
@@ -7,7 +8,7 @@ export type ConfigField =
       key: string;
       label: string;
       type: "model";
-      modelType: "inference" | "audio_generation";
+      modelType: "inference" | "audio_generation" | "image_generation";
       // STT and TTS share the audio_generation model_type, so the name is the only hint for auto-selection.
       prefer?: RegExp;
     }
@@ -52,6 +53,50 @@ function expectAudio(input: Payload | null): Blob {
   return input.blob;
 }
 
+function expectImages(input: Payload | null): Blob[] {
+  if (input?.type !== "image") throw new Error("Expected image input");
+  return input.blobs;
+}
+
+function uploaded(ctx: RunContext, node: WorkflowNode, what: string): Blob {
+  const blob = ctx.inputs[node.id];
+  if (!blob) throw new Error(`Upload ${what} first`);
+  return blob;
+}
+
+export const VISION_MODEL = /vision|moondream|llava|vl/i;
+export const DEFAULT_FRAMES = 4;
+export const DESCRIBE_IMAGE = "Describe this.";
+export const DESCRIBE_FRAMES = "Describe what happens across these frames.";
+
+export function imageGenerationBody(model: string, prompt: string) {
+  return { model, prompt, n: 1, size: "512x512", response_format: "b64_json" };
+}
+
+export function visionBody(model: string, prompt: string, imageUrls: string[]) {
+  return {
+    model,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: prompt },
+          ...imageUrls.map((url) => ({ type: "image_url", image_url: { url } })),
+        ],
+      },
+    ],
+  };
+}
+
+async function chatAnswer(res: Response): Promise<string> {
+  const data = (await res.json()) as {
+    choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
+  };
+  const message = data.choices?.[0]?.message;
+  // Reasoning models inline <think> blocks; downstream nodes should only see the answer.
+  return parseThinking(message?.content ?? "", message?.reasoning_content).answer.trim();
+}
+
 function requireModel(node: WorkflowNode): string {
   const model = node.config.model;
   if (!model) throw new Error("Select a model");
@@ -67,10 +112,13 @@ function audioFileName(blob: Blob): string {
 
 // Deployments a model field can use. STT and TTS share a model_type, so a field with a name hint only takes
 // matching names: binding a TTS model to an STT node would fail at run time.
+// A field without a name hint (the LLM) ranks vision models last so autofill picks a text model when one exists.
 export function matchingDeployments(field: Extract<ConfigField, { type: "model" }>, deployments: Deployment[]): Deployment[] {
-  return deployments.filter(
+  const matches = deployments.filter(
     (d) => d.model_type === field.modelType && d.modelName !== "-" && (!field.prefer || field.prefer.test(d.modelName)),
   );
+  if (field.prefer) return matches;
+  return matches.sort((a, b) => Number(VISION_MODEL.test(a.modelName)) - Number(VISION_MODEL.test(b.modelName)));
 }
 
 export const NODE_KINDS: Record<NodeKind, NodeKindSpec> = {
@@ -81,9 +129,29 @@ export const NODE_KINDS: Record<NodeKind, NodeKindSpec> = {
     output: "audio",
     fields: [],
     run: async (_input, node, ctx) => {
-      const blob = ctx.audioInputs[node.id];
+      const blob = ctx.inputs[node.id];
       if (!blob) throw new Error("Record or upload audio first");
       return { type: "audio", blob };
+    },
+  },
+  imageInput: {
+    label: "Image input",
+    description: "Upload an image",
+    input: null,
+    output: "image",
+    fields: [],
+    run: async (_input, node, ctx) => ({ type: "image", blobs: [uploaded(ctx, node, "an image")] }),
+  },
+  videoInput: {
+    label: "Video input",
+    description: "Upload a short video, sampled into evenly spaced frames",
+    input: null,
+    output: "image",
+    fields: [{ key: "frames", label: "Frames", type: "text", placeholder: String(DEFAULT_FRAMES) }],
+    run: async (_input, node, ctx) => {
+      const video = uploaded(ctx, node, "a video");
+      const count = Math.min(16, Math.max(1, Math.round(Number(node.config.frames) || DEFAULT_FRAMES)));
+      return { type: "image", blobs: await extractFrames(video, count) };
     },
   },
   textInput: {
@@ -142,12 +210,7 @@ export const NODE_KINDS: Record<NodeKind, NodeKindSpec> = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: requireModel(node), messages }),
       });
-      const data = (await res.json()) as {
-        choices?: Array<{ message?: { content?: string; reasoning_content?: string } }>;
-      };
-      const message = data.choices?.[0]?.message;
-      // Reasoning models inline <think> blocks; downstream TTS should only speak the answer.
-      return { type: "text", text: parseThinking(message?.content ?? "", message?.reasoning_content).answer.trim() };
+      return { type: "text", text: await chatAnswer(res) };
     },
   },
   textToSpeech: {
@@ -176,6 +239,43 @@ export const NODE_KINDS: Record<NodeKind, NodeKindSpec> = {
       return { type: "audio", blob: await res.blob() };
     },
   },
+  imageGeneration: {
+    label: "Image generation",
+    description: "Generate an image from a text prompt",
+    input: "text",
+    output: "image",
+    fields: [{ key: "model", label: "Model", type: "model", modelType: "image_generation" }],
+    run: async (input, node, ctx) => {
+      const res = await inference(ctx, "/v1/images/generations", {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(imageGenerationBody(requireModel(node), expectText(input))),
+      });
+      const data = (await res.json()) as { data?: Array<{ b64_json?: string }> };
+      const b64 = data.data?.[0]?.b64_json;
+      if (!b64) throw new Error("No image in response");
+      return { type: "image", blobs: [base64ToBlob(b64)] };
+    },
+  },
+  vision: {
+    label: "Vision",
+    description: "Describe an image or video frames with a vision model",
+    input: "image",
+    output: "text",
+    fields: [
+      { key: "model", label: "Model", type: "model", modelType: "inference", prefer: VISION_MODEL },
+      { key: "prompt", label: "Prompt", type: "textarea", placeholder: DESCRIBE_IMAGE },
+    ],
+    run: async (input, node, ctx) => {
+      const images = expectImages(input);
+      const prompt = node.config.prompt?.trim() || (images.length > 1 ? DESCRIBE_FRAMES : DESCRIBE_IMAGE);
+      const urls = await Promise.all(images.map(toJpegDataUrl));
+      const res = await inference(ctx, "/v1/chat/completions", {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(visionBody(requireModel(node), prompt, urls)),
+      });
+      return { type: "text", text: await chatAnswer(res) };
+    },
+  },
   textOutput: {
     label: "Text output",
     description: "Show the final text",
@@ -191,5 +291,13 @@ export const NODE_KINDS: Record<NodeKind, NodeKindSpec> = {
     output: null,
     fields: [],
     run: async (input) => ({ type: "audio", blob: expectAudio(input) }),
+  },
+  imageOutput: {
+    label: "Image output",
+    description: "Show the final image",
+    input: "image",
+    output: null,
+    fields: [],
+    run: async (input) => ({ type: "image", blobs: expectImages(input) }),
   },
 };

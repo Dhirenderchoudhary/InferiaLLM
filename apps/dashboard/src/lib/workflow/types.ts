@@ -1,15 +1,21 @@
-export type PortType = "audio" | "text";
+export type PortType = "audio" | "text" | "image";
 
 export type NodeKind =
   | "audioInput"
   | "textInput"
+  | "imageInput"
+  | "videoInput"
   | "speechToText"
   | "llm"
   | "textToSpeech"
+  | "imageGeneration"
+  | "vision"
   | "textOutput"
-  | "audioOutput";
+  | "audioOutput"
+  | "imageOutput";
 
-export type Payload = { type: "text"; text: string } | { type: "audio"; blob: Blob };
+// A video travels as its sampled frames, so every image consumer also handles video.
+export type Payload = { type: "text"; text: string } | { type: "audio"; blob: Blob } | { type: "image"; blobs: Blob[] };
 
 export interface WorkflowNode {
   id: string;
@@ -44,6 +50,6 @@ export interface RunContext {
   baseUrl: string;
   token: string | null;
   fetch: typeof fetch;
-  // Recorded/uploaded audio lives outside the workflow because Blobs are not serializable.
-  audioInputs: Record<string, Blob>;
+  // Recorded/uploaded audio, images and videos live outside the workflow because Blobs are not serializable.
+  inputs: Record<string, Blob>;
 }

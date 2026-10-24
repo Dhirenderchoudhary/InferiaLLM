@@ -1,5 +1,5 @@
 import type { Deployment } from "@/hooks/useReadyDeployments";
-import { NODE_KINDS, matchingDeployments } from "./nodeKinds";
+import { DESCRIBE_FRAMES, NODE_KINDS, matchingDeployments } from "./nodeKinds";
 import type { NodeKind, Workflow } from "./types";
 
 export const BANKING_SYSTEM_PROMPT = `You are the voice assistant for Inferia Bank, a fictional bank used for a product demo. Your answers are spoken aloud, so reply in one to three short sentences with no markdown or lists.
@@ -44,6 +44,29 @@ export const TEMPLATES: Record<string, { label: string; build: () => Workflow }>
         { kind: "llm", config: { systemPrompt: "You are a helpful assistant." } },
         { kind: "textOutput" },
       ]),
+  },
+  imageFromText: {
+    label: "Image from a description",
+    build: () =>
+      chain([
+        { kind: "textInput", config: { text: "A red fox sitting in a snowy forest at sunrise" } },
+        { kind: "imageGeneration" },
+        { kind: "imageOutput" },
+      ]),
+  },
+  describeVideo: {
+    label: "Describe a video",
+    build: () =>
+      chain([
+        { kind: "videoInput", config: { frames: "4" } },
+        { kind: "vision", config: { prompt: DESCRIBE_FRAMES } },
+        { kind: "textOutput" },
+      ]),
+  },
+  spokenImage: {
+    label: "Spoken image request",
+    build: () =>
+      chain([{ kind: "audioInput" }, { kind: "speechToText" }, { kind: "imageGeneration" }, { kind: "imageOutput" }]),
   },
 };
 
