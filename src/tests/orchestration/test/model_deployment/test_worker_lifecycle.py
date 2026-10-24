@@ -230,7 +230,8 @@ async def test_terminate_during_provisioning_is_not_overwritten(worker):
         return_value={"provider": "nosana", "allowed_gpu_types": ["a100"], "provider_pool_id": "p"}
     )
     worker.inventory.get_resource_requirement = AsyncMock(return_value=None)
-    worker.inventory.register_node = AsyncMock(return_value=str(uuid4()))
+    registered = str(uuid4())
+    worker.inventory.register_node = AsyncMock(return_value=registered)
     worker.placement.fetch_candidate_nodes = AsyncMock(return_value=[])
 
     adapter = MagicMock()
@@ -257,3 +258,50 @@ async def test_terminate_during_provisioning_is_not_overwritten(worker):
 
     assert deployment_state["state"] == "TERMINATED"
     adapter.deprovision_node.assert_awaited_once()
+    worker.inventory.mark_terminated.assert_awaited_once_with(registered)
+
+
+@pytest.mark.asyncio
+async def test_terminate_before_placement_is_not_overwritten(worker):
+    dep_id = uuid4()
+    deployment_state = {"state": "PENDING"}
+    row = {
+        "deployment_id": str(dep_id),
+        "pool_id": str(uuid4()),
+        "model_id": None,
+        "gpu_per_replica": 1,
+        "replicas": 1,
+        "configuration": '{"workload_type": "inference"}',
+        "model_name": "test-model",
+        "engine": "vllm",
+        "inference_model": None,
+    }
+
+    async def fake_update_state(_id, new_state, *, unless_in=(), **_kw):
+        if deployment_state["state"] in unless_in:
+            return False
+        deployment_state["state"] = new_state
+        return True
+
+    async def fake_update_state_if(_id, *, expected_state, new_state):
+        if deployment_state["state"] == expected_state:
+            deployment_state["state"] = new_state
+            return True
+        return False
+
+    async def terminate_lands(**_kw):
+        deployment_state["state"] = "TERMINATED"
+        return [{"node_id": str(uuid4()), "agent_kind": None}]
+
+    worker.deployments.get = AsyncMock(side_effect=lambda _id: {**row, **deployment_state})
+    worker.deployments.update_state = AsyncMock(side_effect=fake_update_state)
+    worker.deployments.update_state_if = AsyncMock(side_effect=fake_update_state_if)
+    worker.pools.get = AsyncMock(return_value={"provider": "nosana", "provider_pool_id": "p"})
+    worker.inventory.get_resource_requirement = AsyncMock(return_value=None)
+    worker.placement.fetch_candidate_nodes = AsyncMock(side_effect=terminate_lands)
+
+    with patch("orchestration.models.model_deployment.worker.get_adapter", return_value=MagicMock()),             patch("orchestration.models.model_deployment.worker.score_node", return_value=0):
+        await worker.handle_deploy_requested(dep_id)
+
+    assert deployment_state["state"] == "TERMINATED"
+    worker.strategies["vllm"].deploy.assert_not_called()

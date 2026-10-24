@@ -122,6 +122,7 @@ class ModelDeploymentWorker:
         cluster_id = pool.get("cluster_id") if pool else None
 
         node_spec = None
+        registered_node_id = None
 
         # ------------------------------------
         # CLUSTER-BASED DEPLOYMENT (SkyPilot)
@@ -485,6 +486,7 @@ class ModelDeploymentWorker:
                     metadata=node_spec["metadata"],
                     expose_url=expose_url,
                 )
+                registered_node_id = node_id
 
                 if node_id:
                     await self.deployments.attach_runtime(
@@ -526,8 +528,11 @@ class ModelDeploymentWorker:
                 best_node["agent_kind"] if "agent_kind" in best_node.keys() else None
             )
 
-            await self.deployments.update_state(deployment_id, "SCHEDULING")
-            await self.deployments.update_state(deployment_id, "DEPLOYING")
+            # Nothing has been created yet, so an ended deploy needs no cleanup.
+            if not await self._set_state(deployment_id, "SCHEDULING"):
+                return
+            if not await self._set_state(deployment_id, "DEPLOYING"):
+                return
 
             runtime = self.runtime_resolver.resolve(
                 replicas=d["replicas"],
@@ -611,6 +616,8 @@ class ModelDeploymentWorker:
                         provider_instance_id=node_spec["provider_instance_id"],
                         provider_credential_name=pool.get("provider_credential_name"),
                     )
+                    if registered_node_id:
+                        await self.inventory.mark_terminated(registered_node_id)
                 except Exception as cleanup_err:
                     log.warning(
                         f"Failed to cleanup orphaned node for {deployment_id}: {cleanup_err}"
