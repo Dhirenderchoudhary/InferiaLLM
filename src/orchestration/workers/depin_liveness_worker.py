@@ -245,6 +245,10 @@ class DepinLivenessWorker:
                             node_id, err,
                         )
                         continue
+                    if status != "unknown":
+                        # The provider still reports the job alive, and Nosana's stop
+                        # ignores the HTTP status: confirm on a later tick.
+                        continue
                 await self.inventory.clear_deprovision_failed(node_id=node_id)
                 logger.info("DePIN reconcile: external job for node %s is stopped", node_id)
             except Exception:

@@ -555,16 +555,34 @@ _LEAKED = {"id": "n9", "provider": "nosana", "provider_instance_id": "job-x",
            "provider_credential_name": "c1"}
 
 
-async def test_failed_deprovision_is_retried_and_cleared(monkeypatch):
+async def test_failed_deprovision_is_retried_and_cleared_once_stopped(monkeypatch):
     deploys, inventory, pool_repo = _leak_mocks([_LEAKED])
     dep = AsyncMock(return_value=(True, None))
     monkeypatch.setattr(mod, "_deprovision_direct_node", dep)
+    statuses = iter(["RUNNING", "STOPPED"])
     w = mod.DepinLivenessWorker(deploys=deploys, inventory=inventory, pool_repo=pool_repo,
-                                get_adapter_fn=lambda p: _adapter("RUNNING"))
+                                get_adapter_fn=lambda p: _adapter(next(statuses)))
+
+    await w.reconcile_once()
+    dep.assert_awaited_once()
+    assert dep.await_args.kwargs["pool_credential_name"] == "c1"
+    inventory.clear_deprovision_failed.assert_not_awaited()
+
+    await w.reconcile_once()
+    dep.assert_awaited_once()
+    inventory.clear_deprovision_failed.assert_awaited_once_with(node_id="n9")
+
+
+async def test_failed_deprovision_with_unknown_status_clears_after_stop(monkeypatch):
+    # k8s and Akash report no status, so a successful stop is all there is to go on.
+    deploys, inventory, pool_repo = _leak_mocks([{**_LEAKED, "provider": "k8s"}])
+    dep = AsyncMock(return_value=(True, None))
+    monkeypatch.setattr(mod, "_deprovision_direct_node", dep)
+    w = mod.DepinLivenessWorker(deploys=deploys, inventory=inventory, pool_repo=pool_repo,
+                                get_adapter_fn=lambda p: _adapter("unknown"))
     await w.reconcile_once()
 
     dep.assert_awaited_once()
-    assert dep.await_args.kwargs["pool_credential_name"] == "c1"
     inventory.clear_deprovision_failed.assert_awaited_once_with(node_id="n9")
 
 
