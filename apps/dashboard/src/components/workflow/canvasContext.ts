@@ -8,10 +8,10 @@ export interface CanvasContextValue {
   deployments: Deployment[];
   runs: Record<string, NodeRun>;
   history: History;
-  audioInputs: Record<string, Blob>;
+  inputs: Record<string, Blob>;
   readiness: Record<string, Readiness>;
   setConfig: (nodeId: string, key: string, value: string) => void;
-  setAudio: (nodeId: string, blob: Blob) => void;
+  setInput: (nodeId: string, blob: Blob) => void;
   removeNode: (nodeId: string) => void;
   deploy: (nodeId: string) => void;
 }

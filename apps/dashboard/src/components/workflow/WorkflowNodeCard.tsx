@@ -36,11 +36,13 @@ export function WorkflowNodeCard({ id, data, selected }: NodeProps<FlowNode>) {
       {ready && <ReadinessBanner nodeId={id} readiness={ready} />}
       <div className="space-y-2 p-3">
         {data.kind === "audioInput" && <AudioSource nodeId={id} />}
+        {data.kind === "imageInput" && <FileSource nodeId={id} accept="image/*" />}
+        {data.kind === "videoInput" && <FileSource nodeId={id} accept="video/*" />}
         {spec.fields.map((field) => (
           <Field key={field.key} nodeId={id} field={field} value={data.config[field.key] ?? ""} />
         ))}
         {run?.error && <p className="text-xs text-red-500">{run.error}</p>}
-        {run?.output && data.kind !== "audioInput" && (
+        {run?.output && data.kind !== "audioInput" && data.kind !== "imageInput" && (
           <Output payload={run.output} autoPlay={data.kind === "audioOutput"} />
         )}
       </div>
@@ -175,11 +177,11 @@ function Field({ nodeId, field, value }: { nodeId: string; field: ConfigField; v
 }
 
 function AudioSource({ nodeId }: { nodeId: string }) {
-  const { audioInputs, setAudio } = useCanvas();
+  const { inputs, setInput } = useCanvas();
   const [recording, setRecording] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
-  const blob = audioInputs[nodeId];
+  const blob = inputs[nodeId];
 
   useEffect(() => () => recorderRef.current?.stream.getTracks().forEach((t) => t.stop()), []);
 
@@ -192,7 +194,7 @@ function AudioSource({ nodeId }: { nodeId: string }) {
       recorder.ondataavailable = (e) => chunks.push(e.data);
       recorder.onstop = () => {
         stream.getTracks().forEach((t) => t.stop());
-        setAudio(nodeId, new Blob(chunks, { type: recorder.mimeType || "audio/webm" }));
+        setInput(nodeId, new Blob(chunks, { type: recorder.mimeType || "audio/webm" }));
       };
       recorder.start();
       recorderRef.current = recorder;
@@ -222,20 +224,7 @@ function AudioSource({ nodeId }: { nodeId: string }) {
           {recording ? <Square className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
           {recording ? "Stop and run" : "Record"}
         </button>
-        <label className="nodrag flex cursor-pointer items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs hover:bg-muted">
-          <Upload className="h-3.5 w-3.5" />
-          Upload
-          <input
-            type="file"
-            accept="audio/*"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) setAudio(nodeId, file);
-              e.target.value = "";
-            }}
-          />
-        </label>
+        <UploadButton accept="audio/*" onFile={(file) => setInput(nodeId, file)} />
       </div>
       {recording && <p className="animate-pulse text-xs text-red-500">Recording...</p>}
       {micError && <p className="text-xs text-red-500">{micError}</p>}
@@ -244,8 +233,66 @@ function AudioSource({ nodeId }: { nodeId: string }) {
   );
 }
 
+function UploadButton({ accept, onFile, wide = false }: { accept: string; onFile: (file: File) => void; wide?: boolean }) {
+  return (
+    <label
+      className={cn(
+        "nodrag flex cursor-pointer items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-xs hover:bg-muted",
+        wide && "w-full",
+      )}
+    >
+      <Upload className="h-3.5 w-3.5" />
+      Upload
+      <input
+        type="file"
+        accept={accept}
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onFile(file);
+          e.target.value = "";
+        }}
+      />
+    </label>
+  );
+}
+
+function FileSource({ nodeId, accept }: { nodeId: string; accept: "image/*" | "video/*" }) {
+  const { inputs, setInput } = useCanvas();
+  const blob = inputs[nodeId];
+  return (
+    <div className="space-y-2">
+      <UploadButton accept={accept} onFile={(file) => setInput(nodeId, file)} wide />
+      {blob && (accept === "image/*" ? <Thumbnails blobs={[blob]} /> : <VideoPreview blob={blob} />)}
+    </div>
+  );
+}
+
+function useObjectUrls(blobs: Blob[]): string[] {
+  const urls = useMemo(() => blobs.map((b) => URL.createObjectURL(b)), [blobs]);
+  useEffect(() => () => urls.forEach((u) => URL.revokeObjectURL(u)), [urls]);
+  return urls;
+}
+
+function Thumbnails({ blobs }: { blobs: Blob[] }) {
+  const urls = useObjectUrls(blobs);
+  return (
+    <div className={cn("grid gap-1", urls.length > 1 && "grid-cols-2")}>
+      {urls.map((u, i) => (
+        <img key={u} src={u} alt={`Image ${i + 1}`} className="w-full rounded-md border object-contain" />
+      ))}
+    </div>
+  );
+}
+
+function VideoPreview({ blob }: { blob: Blob }) {
+  const [url] = useObjectUrls(useMemo(() => [blob], [blob]));
+  return <video src={url} controls muted className="nodrag w-full rounded-md border" />;
+}
+
 function Output({ payload, autoPlay }: { payload: Payload; autoPlay: boolean }) {
   if (payload.type === "audio") return <AudioPlayer blob={payload.blob} autoPlay={autoPlay} />;
+  if (payload.type === "image") return <Thumbnails blobs={payload.blobs} />;
   return (
     <div className="nowheel nodrag max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md border bg-muted/40 p-2 text-xs">
       {payload.text || <span className="text-muted-foreground">(empty)</span>}

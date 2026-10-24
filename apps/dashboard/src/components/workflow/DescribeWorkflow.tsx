@@ -18,7 +18,7 @@ function complete(model: string) {
     const out = await NODE_KINDS.llm.run(
       { type: "text", text: user },
       { id: "planner", kind: "llm", position: { x: 0, y: 0 }, config: { model, systemPrompt: system } },
-      { baseUrl: INFERENCE_URL, token: getToken(), fetch: window.fetch.bind(window), audioInputs: {} },
+      { baseUrl: INFERENCE_URL, token: getToken(), fetch: window.fetch.bind(window), inputs: {} },
     );
     return out.type === "text" ? out.text : "";
   };

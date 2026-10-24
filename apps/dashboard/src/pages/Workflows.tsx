@@ -88,7 +88,7 @@ function Canvas({ deployments: initialDeployments }: { deployments: Deployment[]
   const [runs, setRuns] = useState<Record<string, NodeRun>>({});
   const [history, setHistory] = useState(loadHistory);
   const [timing, setTiming] = useState<{ startedAt: number; endedAt: number | null } | null>(null);
-  const [audioInputs, setAudioInputs] = useState<Record<string, Blob>>({});
+  const [inputs, setInputs] = useState<Record<string, Blob>>({});
   const [running, setRunning] = useState(false);
   const [saved, setSaved] = useState(loadSavedWorkflows);
   const [name, setName] = useState("");
@@ -121,7 +121,7 @@ function Canvas({ deployments: initialDeployments }: { deployments: Deployment[]
       setNodes(flow.nodes);
       setEdges(flow.edges);
       setRuns({});
-      setAudioInputs({});
+      setInputs({});
       setTiming(null);
       setHistory({});
       saveHistory({});
@@ -131,7 +131,7 @@ function Canvas({ deployments: initialDeployments }: { deployments: Deployment[]
     [setNodes, setEdges, fitView, reset],
   );
 
-  const run = async (inputs = audioInputs) => {
+  const run = async (current = inputs) => {
     if (running) return;
     if (blocker) return void toast.error(blocker);
     setRunning(true);
@@ -140,7 +140,7 @@ function Canvas({ deployments: initialDeployments }: { deployments: Deployment[]
     try {
       const results = await runWorkflow(
         fromFlow(nodes, edges),
-        { baseUrl: INFERENCE_URL, token: getToken(), fetch: window.fetch.bind(window), audioInputs: inputs },
+        { baseUrl: INFERENCE_URL, token: getToken(), fetch: window.fetch.bind(window), inputs: current },
         (id, r) => setRuns((prev) => ({ ...prev, [id]: r })),
       );
       setTiming({ startedAt, endedAt: performance.now() });
@@ -185,12 +185,12 @@ function Canvas({ deployments: initialDeployments }: { deployments: Deployment[]
     deployments,
     runs,
     history,
-    audioInputs,
+    inputs,
     readiness,
     setConfig,
-    setAudio: (nodeId, blob) => {
-      const next = { ...audioInputs, [nodeId]: blob };
-      setAudioInputs(next);
+    setInput: (nodeId, blob) => {
+      const next = { ...inputs, [nodeId]: blob };
+      setInputs(next);
       void run(next);
     },
     removeNode: (nodeId) => void deleteElements({ nodes: [{ id: nodeId }] }),
