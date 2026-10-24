@@ -147,6 +147,7 @@ class GatewayService:
                 )
                 response = await client.send(request, stream=True)
                 response.raise_for_status()
+            await breaker._record_success()
             # Slot released — stream body without holding it
             try:
                 total_bytes = 0
@@ -161,8 +162,17 @@ class GatewayService:
             finally:
                 await response.aclose()
         except httpx.HTTPStatusError as e:
-            await breaker._record_failure()
-            logger.error(f"Upstream Error {e.response.status_code}: {e.response.text}")
+            # A 4xx is about this request, not the upstream's health.
+            if e.response.status_code >= 500:
+                await breaker._record_failure()
+            try:
+                await e.response.aread()
+                body = e.response.text[:500]
+            except httpx.HTTPError:
+                body = "<unreadable>"
+            finally:
+                await e.response.aclose()
+            logger.error(f"Upstream Error {e.response.status_code}: {body}")
             yield _upstream_error(
                 error_sink, 502, "Upstream provider returned an error"
             )
@@ -246,7 +256,8 @@ class GatewayService:
         except HTTPException:
             raise
         except httpx.HTTPStatusError as e:
-            await breaker._record_failure()
+            if e.response.status_code >= 500:
+                await breaker._record_failure()
             logger.error(f"Provider error {e.response.status_code}: {e.response.text}")
             raise HTTPException(
                 status_code=e.response.status_code,
