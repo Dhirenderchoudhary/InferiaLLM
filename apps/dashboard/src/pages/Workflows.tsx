@@ -132,7 +132,10 @@ function Canvas({ deployments: initialDeployments }: { deployments: Deployment[]
   );
 
   const run = async (current = inputs) => {
-    if (running) return;
+    if (running) {
+      toast.info("A run is already in progress");
+      return;
+    }
     if (blocker) return void toast.error(blocker);
     setRunning(true);
     const startedAt = performance.now();

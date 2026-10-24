@@ -82,9 +82,12 @@ class TestEachFailurePathReportsItself:
         sink = {}
         breaker = MagicMock()
         breaker._can_execute = AsyncMock(return_value=True)
+        breaker._record_success = AsyncMock()
         breaker._record_failure = AsyncMock()
 
         response = MagicMock(status_code=500, text="boom")
+        response.aread = AsyncMock()
+        response.aclose = AsyncMock()
         client = MagicMock()
         client.build_request.return_value = MagicMock()
         client.send = AsyncMock(
@@ -104,6 +107,7 @@ class TestEachFailurePathReportsItself:
         sink = {}
         breaker = MagicMock()
         breaker._can_execute = AsyncMock(return_value=True)
+        breaker._record_success = AsyncMock()
         breaker._record_failure = AsyncMock()
 
         client = MagicMock()
@@ -128,6 +132,7 @@ class TestEachFailurePathReportsItself:
         sink = {}
         breaker = MagicMock()
         breaker._can_execute = AsyncMock(return_value=True)
+        breaker._record_success = AsyncMock()
 
         response = MagicMock()
         response.raise_for_status = MagicMock()
@@ -156,6 +161,7 @@ class TestEachFailurePathReportsItself:
         sink = {}
         breaker = MagicMock()
         breaker._can_execute = AsyncMock(return_value=True)
+        breaker._record_success = AsyncMock()
 
         response = MagicMock()
         response.raise_for_status = MagicMock()

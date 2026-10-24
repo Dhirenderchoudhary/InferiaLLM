@@ -181,6 +181,11 @@ function AudioSource({ nodeId }: { nodeId: string }) {
   const [recording, setRecording] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
+  // The recorder outlives the render that started it; stopping must reach the current run state.
+  const setInputRef = useRef(setInput);
+  useEffect(() => {
+    setInputRef.current = setInput;
+  });
   const blob = inputs[nodeId];
 
   useEffect(() => () => recorderRef.current?.stream.getTracks().forEach((t) => t.stop()), []);
@@ -194,7 +199,7 @@ function AudioSource({ nodeId }: { nodeId: string }) {
       recorder.ondataavailable = (e) => chunks.push(e.data);
       recorder.onstop = () => {
         stream.getTracks().forEach((t) => t.stop());
-        setInput(nodeId, new Blob(chunks, { type: recorder.mimeType || "audio/webm" }));
+        setInputRef.current(nodeId, new Blob(chunks, { type: recorder.mimeType || "audio/webm" }));
       };
       recorder.start();
       recorderRef.current = recorder;
