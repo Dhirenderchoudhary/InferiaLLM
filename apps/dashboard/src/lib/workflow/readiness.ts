@@ -5,11 +5,20 @@ import type { NodeKind, Workflow, WorkflowNode } from "./types";
 export interface CatalogModel {
   modelId: string;
   engine: string;
-  modelType: "inference" | "audio_generation";
+  modelType: "inference" | "audio_generation" | "image_generation";
   // Becomes the deployment's model_name, which is also the name the inference API routes on.
   deploymentName: string;
   job: Record<string, unknown>;
 }
+
+const ollama = (modelId: string) => ({
+  model_id: modelId,
+  engine: "ollama",
+  image: "ollama/ollama:latest",
+  cmd: ["serve"],
+  expose: [{ port: 11434, type: "http" }],
+  gpu: true,
+});
 
 const speaches = (modelId: string) => ({
   model_id: modelId,
@@ -40,14 +49,21 @@ export const MODEL_CATALOG: Partial<Record<NodeKind, CatalogModel>> = {
     engine: "ollama",
     modelType: "inference",
     deploymentName: "qwen2-5-1-5b",
-    job: {
-      model_id: "qwen2.5:1.5b",
-      engine: "ollama",
-      image: "ollama/ollama:latest",
-      cmd: ["serve"],
-      expose: [{ port: 11434, type: "http" }],
-      gpu: true,
-    },
+    job: ollama("qwen2.5:1.5b"),
+  },
+  vision: {
+    modelId: "moondream",
+    engine: "ollama",
+    modelType: "inference",
+    deploymentName: "moondream-vision",
+    job: ollama("moondream"),
+  },
+  imageGeneration: {
+    modelId: "stabilityai/sd-turbo",
+    engine: "generic",
+    modelType: "image_generation",
+    deploymentName: "sd-turbo-image",
+    job: { model_id: "stabilityai/sd-turbo", engine: "generic", expose: [{ port: 8000, type: "http" }], gpu: true },
   },
 };
 

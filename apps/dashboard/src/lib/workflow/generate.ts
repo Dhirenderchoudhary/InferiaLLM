@@ -1,5 +1,5 @@
 import { connectionError } from "./engine";
-import { NODE_KINDS } from "./nodeKinds";
+import { DESCRIBE_FRAMES, NODE_KINDS } from "./nodeKinds";
 import type { ConfigField } from "./nodeKinds";
 import type { NodeKind, Workflow, WorkflowNode } from "./types";
 
@@ -20,7 +20,7 @@ export function plannerPrompt(): string {
   return [
     "You design pipelines for a node-based workflow editor. The only node kinds are:",
     ...kinds,
-    "Rules: an edge connects a node's output to another node's input of the same type. A node has at most one incoming edge. No cycles. Every node must sit on a path from an input node (no input) to an output node (no output). Use audioInput when the user speaks and audioOutput when the app talks back. Only use the config keys listed.",
+    "Rules: an edge connects a node's output to another node's input of the same type. A node has at most one incoming edge. No cycles. Every node must sit on a path from an input node (no input) to an output node (no output). Use audioInput when the user speaks and audioOutput when the app talks back. Use imageGeneration to draw pictures and vision to look at images or video frames. Only use the config keys listed.",
     'Reply with only one JSON object, no prose and no code fences, shaped like {"nodes":[{"id":"n1","kind":"textInput","config":{"text":"Hi"}}],"edges":[{"source":"n1","target":"n2"}]}',
   ].join("\n");
 }
@@ -169,6 +169,26 @@ const RULES: Array<{ test: RegExp; steps: (systemPrompt: string) => Step[] }> = 
   {
     test: /read\b.*\baloud|out loud|speak (the |this )?text|text to speech|narrat/,
     steps: () => [{ kind: "textInput", config: { text: "Hello from your workflow." } }, { kind: "textToSpeech" }, { kind: "audioOutput" }],
+  },
+  {
+    test: /(voice|speak|say|spoken|talk).*(image|picture|draw|paint)|(image|picture|draw|paint).*(voice|speak|spoken|say)/,
+    steps: () => [{ kind: "audioInput" }, { kind: "speechToText" }, { kind: "imageGeneration" }, { kind: "imageOutput" }],
+  },
+  {
+    test: /video|clip|footage/,
+    steps: () => [{ kind: "videoInput" }, { kind: "vision", config: { prompt: DESCRIBE_FRAMES } }, { kind: "textOutput" }],
+  },
+  {
+    test: /photo|look at|what'?s in|describe (an |the |this )?(image|picture)|recogni/,
+    steps: () => [{ kind: "imageInput" }, { kind: "vision" }, { kind: "textOutput" }],
+  },
+  {
+    test: /image|picture|draw|paint|illustrat/,
+    steps: () => [
+      { kind: "textInput", config: { text: "A watercolor lighthouse on a cliff at dusk" } },
+      { kind: "imageGeneration" },
+      { kind: "imageOutput" },
+    ],
   },
   {
     test: /voice|speak|call|talk|phone/,

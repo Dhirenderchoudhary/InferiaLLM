@@ -19,11 +19,16 @@ describe("node registry", () => {
     expect(ports).toEqual({
       audioInput: [null, "audio"],
       textInput: [null, "text"],
+      imageInput: [null, "image"],
+      videoInput: [null, "image"],
       speechToText: ["audio", "text"],
       llm: ["text", "text"],
       textToSpeech: ["text", "audio"],
+      imageGeneration: ["text", "image"],
+      vision: ["image", "text"],
       textOutput: ["text", null],
       audioOutput: ["audio", null],
+      imageOutput: ["image", null],
     });
   });
 });
@@ -109,7 +114,7 @@ describe("runWorkflow with the banking voice template", () => {
       baseUrl: "http://inference.test/",
       token: "tok",
       fetch: fetchMock as unknown as typeof fetch,
-      audioInputs: { "audioInput-1": mic },
+      inputs: { "audioInput-1": mic },
     };
 
     const runs = await runWorkflow(workflow, ctx);
@@ -161,7 +166,7 @@ describe("runWorkflow with the banking voice template", () => {
     workflow.nodes[1].config.model = "llama";
     const fetchMock = vi.fn(async () => Response.json({ detail: "Model not ready" }, { status: 503 }));
     const runs = await runWorkflow(workflow, {
-      baseUrl: "http://x", token: null, fetch: fetchMock as unknown as typeof fetch, audioInputs: {},
+      baseUrl: "http://x", token: null, fetch: fetchMock as unknown as typeof fetch, inputs: {},
     });
     expect(runs["textInput-1"].status).toBe("done");
     expect(runs["llm-2"]).toMatchObject({ status: "error", error: "Model not ready" });
@@ -170,7 +175,7 @@ describe("runWorkflow with the banking voice template", () => {
 
   it("errors when the mic has no recording", async () => {
     const runs = await runWorkflow(TEMPLATES.bankingVoice.build(), {
-      baseUrl: "http://x", token: null, fetch: vi.fn() as unknown as typeof fetch, audioInputs: {},
+      baseUrl: "http://x", token: null, fetch: vi.fn() as unknown as typeof fetch, inputs: {},
     });
     expect(runs["audioInput-1"]).toMatchObject({ status: "error", error: "Record or upload audio first" });
   });
@@ -188,7 +193,7 @@ describe("runWorkflow timing", () => {
     try {
       await runWorkflow(
         workflow,
-        { baseUrl: "http://x", token: null, fetch: fetchMock as unknown as typeof fetch, audioInputs: {} },
+        { baseUrl: "http://x", token: null, fetch: fetchMock as unknown as typeof fetch, inputs: {} },
         (id, r) => events.push([id, r]),
       );
     } finally {
