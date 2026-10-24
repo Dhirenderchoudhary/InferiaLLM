@@ -108,3 +108,36 @@ async def test_upstream_4xx_is_passed_through(upstream):
                return_value=httpx.AsyncClient(transport=httpx.MockTransport(handler))):
         resp = await _post("/v1/audio/speech", json={"model": "tts", "input": "hi", "voice": "nope"})
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_oversized_upload_is_refused_before_the_key_is_checked(upstream):
+    seen, model_types = upstream
+    with patch("inference.app.MAX_AUDIO_BYTES", 10):
+        resp = await _post(
+            "/v1/audio/transcriptions",
+            files={"file": ("big.wav", b"x" * 100, "audio/wav")},
+            data={"model": "stt"},
+        )
+    assert resp.status_code == 413
+    assert model_types == [] and seen == []
+
+
+@pytest.mark.asyncio
+async def test_speech_input_over_the_limit_is_400(upstream):
+    seen, _ = upstream
+    resp = await _post("/v1/audio/speech", json={"model": "tts", "input": "a" * 4097, "voice": "af_heart"})
+    assert resp.status_code == 400
+    assert seen == []
+
+
+@pytest.mark.asyncio
+async def test_unexpected_upstream_content_type_is_not_passed_through(upstream):
+    def handler(request):
+        return httpx.Response(200, content=b"<script>x</script>", headers={"content-type": "text/html"})
+
+    with patch("inference.core.service.http_client.get_client",
+               return_value=httpx.AsyncClient(transport=httpx.MockTransport(handler))):
+        resp = await _post("/v1/audio/speech", json={"model": "tts", "input": "hi", "voice": "af_heart"})
+    assert resp.headers["content-type"] == "application/octet-stream"
+    assert resp.headers["x-content-type-options"] == "nosniff"

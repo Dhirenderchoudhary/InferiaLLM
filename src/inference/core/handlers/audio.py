@@ -15,6 +15,18 @@ logger = logging.getLogger(__name__)
 
 MODEL_TYPE = "audio_generation"
 DEFAULT_ENGINE = "speaches"
+MAX_SPEECH_CHARS = 4096  # OpenAI's limit.
+
+# /inf shares the dashboard's origin, so never pass through e.g. text/html.
+_SAFE_TYPES = ("audio/", "application/json", "text/plain", "text/vtt", "application/x-subrip")
+
+
+def _safe_response(resp, default_type: str) -> Response:
+    ctype = resp.headers.get("content-type") or default_type
+    if not ctype.lower().startswith(_SAFE_TYPES):
+        ctype = "application/octet-stream"
+    return Response(content=resp.content, media_type=ctype,
+                    headers={"X-Content-Type-Options": "nosniff"})
 
 
 class AudioHandler:
@@ -53,7 +65,7 @@ class AudioHandler:
             if isinstance(data, dict) and "model" in data:
                 data["model"] = model
             return data
-        return Response(content=resp.content, media_type=resp.headers.get("content-type"))
+        return _safe_response(resp, "text/plain")
 
     @staticmethod
     async def handle_speech(
@@ -65,6 +77,11 @@ class AudioHandler:
     ):
         if not body.get("model") or not body.get("input"):
             raise HTTPException(status_code=400, detail="Model and input are required")
+        if len(str(body["input"])) > MAX_SPEECH_CHARS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Input too long (max {MAX_SPEECH_CHARS} characters)",
+            )
 
         async def send(ctx: RequestContext):
             return await GatewayService.call_upstream_raw(
@@ -79,10 +96,7 @@ class AudioHandler:
             api_key, body, "speech", send, log_payload=body,
             background_tasks=background_tasks, ip_address=ip_address, sandbox=sandbox,
         )
-        return Response(
-            content=resp.content,
-            media_type=resp.headers.get("content-type", "audio/mpeg"),
-        )
+        return _safe_response(resp, "audio/mpeg")
 
     @staticmethod
     async def _handle(

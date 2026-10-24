@@ -289,6 +289,11 @@ async def create_embeddings(
     )
 
 
+# OpenAI's limit. Checked before the form is read: the API key is only
+# validated later, so an oversized upload must not reach memory first.
+MAX_AUDIO_BYTES = 25 * 1024 * 1024
+
+
 @app.post("/v1/audio/transcriptions")
 async def create_transcription(
     request: Request,
@@ -300,6 +305,12 @@ async def create_transcription(
     is_sandbox = sandbox.lower() == "true" if sandbox else False
     api_key = extract_api_key(authorization, is_sandbox)
     try:
+        declared = int(request.headers.get("content-length") or 0)
+    except ValueError:
+        declared = 0
+    if declared > MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="Audio file too large (max 25 MB)")
+    try:
         form = await request.form()
     except Exception:
         raise HTTPException(status_code=400, detail="Expected a multipart form")
@@ -310,10 +321,14 @@ async def create_transcription(
         k: v for k, v in form.items() if isinstance(v, str) and k not in ("model", "file")
     }
 
+    audio = await upload.read(MAX_AUDIO_BYTES + 1)
+    if len(audio) > MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="Audio file too large (max 25 MB)")
+
     return await OrchestrationService.handle_transcription(
         api_key=api_key,
         model=str(form.get("model") or ""),
-        audio=await upload.read(),
+        audio=audio,
         filename=upload.filename or "audio",
         content_type=upload.content_type,
         fields=fields,
