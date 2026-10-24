@@ -113,6 +113,8 @@ class TestStreamUpstreamErrorSanitization:
         mock_response = MagicMock()
         mock_response.status_code = 429
         mock_response.text = "Rate limit exceeded for org-secret-id-12345"
+        mock_response.aread = AsyncMock()
+        mock_response.aclose = AsyncMock()
 
         error = httpx.HTTPStatusError(
             "Rate limited", request=MagicMock(), response=mock_response

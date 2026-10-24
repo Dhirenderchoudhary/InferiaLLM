@@ -51,6 +51,7 @@ def _fake_deployment(**over):
         engine="ollama",
         endpoint="http://x:11434",
         org_id="org-1",
+        model_type="inference",
         error_message="",
     )
     base.update(over)
@@ -68,9 +69,8 @@ async def _get(path):
         return await c.get(path, headers={"X-Organization-ID": "org-1"})
 
 
-async def test_listing_includes_inference_model_distinct_from_model_name():
-    dep = _fake_deployment()
-    resp = SimpleNamespace(deployments=[dep])
+async def _list(*deps):
+    resp = SimpleNamespace(deployments=list(deps))
     stub = MagicMock()
     stub.ListDeployments = AsyncMock(return_value=resp)
 
@@ -84,7 +84,11 @@ async def test_listing_includes_inference_model_distinct_from_model_name():
              deployment_server.asyncpg, "connect",
              AsyncMock(return_value=_FakeConn()),
          ):
-        r = await _get("/deployment/deployments?org_id=org-1")
+        return await _get("/deployment/deployments?org_id=org-1")
+
+
+async def test_listing_includes_inference_model_distinct_from_model_name():
+    r = await _list(_fake_deployment())
 
     assert r.status_code == 200, r.text
     body = r.json()["deployments"]
@@ -94,3 +98,10 @@ async def test_listing_includes_inference_model_distinct_from_model_name():
     assert row["model_name"] == "My Prod Bot"
     # The two must be distinct fields so the UI can show the real model.
     assert row["inference_model"] != row["model_name"]
+
+
+async def test_listing_includes_model_type():
+    r = await _list(_fake_deployment(model_type="audio_generation"))
+
+    assert r.status_code == 200, r.text
+    assert r.json()["deployments"][0]["model_type"] == "audio_generation"

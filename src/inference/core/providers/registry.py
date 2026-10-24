@@ -34,6 +34,7 @@ TEXT_INFERENCE_ENGINES = {"vllm", "sglang", "ollama", "generic"}
 EMBEDDING_ENGINES = {"infinity", "tei"}
 IMAGE_ENGINES = {"inferia-diffusion"}
 VIDEO_ENGINES = {"inferia-diffusion"}
+AUDIO_ENGINES = {"speaches"}
 
 # Backward-compat aliases
 EXTERNAL_ENGINES = EXTERNAL_PROVIDERS
@@ -71,6 +72,8 @@ def get_adapter(engine: str) -> ProviderAdapter:
         "vllm": ComputeAdapter(),
         "ollama": ComputeAdapter(),
         "generic": ComputeAdapter(),
+        # Speech engines (OpenAI-compatible /v1/audio/*)
+        "speaches": ComputeAdapter(),
         # Embedding engines (OpenAI-compatible for embeddings)
         "infinity": EmbeddingAdapter(),
         "tei": EmbeddingAdapter(),

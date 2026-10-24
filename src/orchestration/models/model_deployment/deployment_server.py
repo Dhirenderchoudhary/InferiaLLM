@@ -4150,6 +4150,7 @@ async def list_all_deployments(
             "engine": d.engine,
             "endpoint": d.endpoint,
             "org_id": d.org_id,
+            "model_type": d.model_type or "inference",
             "error_message": d.error_message or None,
         }
         for d in resp.deployments

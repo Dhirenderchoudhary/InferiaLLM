@@ -109,7 +109,7 @@ export const NODE_KINDS: Record<NodeKind, NodeKindSpec> = {
         label: "Model",
         type: "model",
         modelType: "audio_generation",
-        prefer: /whisper|stt|asr|transcri|parakeet/i,
+        prefer: /whisper|stt|asr|speech.?to.?text|transcri|recogni|parakeet/i,
       },
     ],
     run: async (input, node, ctx) => {
@@ -161,7 +161,7 @@ export const NODE_KINDS: Record<NodeKind, NodeKindSpec> = {
         label: "Model",
         type: "model",
         modelType: "audio_generation",
-        prefer: /tts|speech|kokoro|voice|bark|piper|orpheus/i,
+        prefer: /tts|text.?to.?speech|kokoro|bark|piper|orpheus/i,
       },
       { key: "voice", label: "Voice", type: "text", placeholder: DEFAULT_VOICE, deploymentSpecific: true },
     ],
