@@ -64,6 +64,7 @@ function uploaded(ctx: RunContext, node: WorkflowNode, what: string): Blob {
   return blob;
 }
 
+export const VISION_MODEL = /vision|moondream|llava|vl/i;
 export const DEFAULT_FRAMES = 4;
 export const DESCRIBE_IMAGE = "Describe this.";
 export const DESCRIBE_FRAMES = "Describe what happens across these frames.";
@@ -111,10 +112,13 @@ function audioFileName(blob: Blob): string {
 
 // Deployments a model field can use. STT and TTS share a model_type, so a field with a name hint only takes
 // matching names: binding a TTS model to an STT node would fail at run time.
+// A field without a name hint (the LLM) ranks vision models last so autofill picks a text model when one exists.
 export function matchingDeployments(field: Extract<ConfigField, { type: "model" }>, deployments: Deployment[]): Deployment[] {
-  return deployments.filter(
+  const matches = deployments.filter(
     (d) => d.model_type === field.modelType && d.modelName !== "-" && (!field.prefer || field.prefer.test(d.modelName)),
   );
+  if (field.prefer) return matches;
+  return matches.sort((a, b) => Number(VISION_MODEL.test(a.modelName)) - Number(VISION_MODEL.test(b.modelName)));
 }
 
 export const NODE_KINDS: Record<NodeKind, NodeKindSpec> = {
@@ -258,7 +262,7 @@ export const NODE_KINDS: Record<NodeKind, NodeKindSpec> = {
     input: "image",
     output: "text",
     fields: [
-      { key: "model", label: "Model", type: "model", modelType: "inference", prefer: /vision|moondream|llava|vl/i },
+      { key: "model", label: "Model", type: "model", modelType: "inference", prefer: VISION_MODEL },
       { key: "prompt", label: "Prompt", type: "textarea", placeholder: DESCRIBE_IMAGE },
     ],
     run: async (input, node, ctx) => {

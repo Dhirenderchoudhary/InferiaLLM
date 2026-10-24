@@ -5,7 +5,7 @@ import type { Deployment } from "@/hooks/useReadyDeployments";
 import { INFERENCE_URL } from "@/lib/api";
 import { getToken } from "@/lib/tokenStore";
 import { generateWorkflow, type PlanSource } from "@/lib/workflow/generate";
-import { NODE_KINDS } from "@/lib/workflow/nodeKinds";
+import { NODE_KINDS, VISION_MODEL } from "@/lib/workflow/nodeKinds";
 import type { Workflow } from "@/lib/workflow/types";
 import { cn } from "@/lib/utils";
 
@@ -31,7 +31,11 @@ export function DescribeWorkflow({
   deployments: Deployment[];
   onGenerated: (workflow: Workflow) => void;
 }) {
-  const models = deployments.filter((d) => d.model_type === "inference" && d.modelName !== "-").map((d) => d.modelName);
+  // Vision models share the inference type but plan poorly, so they only come first when nothing else is deployed.
+  const models = deployments
+    .filter((d) => d.model_type === "inference" && d.modelName !== "-")
+    .map((d) => d.modelName)
+    .sort((a, b) => Number(VISION_MODEL.test(a)) - Number(VISION_MODEL.test(b)));
   const [description, setDescription] = useState("");
   const [picked, setPicked] = useState("");
   const [busy, setBusy] = useState(false);

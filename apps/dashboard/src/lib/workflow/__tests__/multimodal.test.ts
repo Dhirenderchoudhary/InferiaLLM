@@ -120,6 +120,13 @@ describe("vision model choice", () => {
     expect(matchingDeployments(field, deps).map((d) => d.modelName)).toEqual(["moondream-vision", "llava-7b"]);
   });
 
+  it("ranks vision models last for the plain LLM field", () => {
+    const llm = NODE_KINDS.llm.fields[0];
+    if (llm.type !== "model") throw new Error("llm needs a model field");
+    const deps = [dep("moondream-vision", "inference"), dep("qwen2-5-1-5b", "inference")];
+    expect(matchingDeployments(llm, deps).map((d) => d.modelName)).toEqual(["qwen2-5-1-5b", "moondream-vision"]);
+  });
+
   it("recommends the catalog models when nothing matches", () => {
     expect(nodeReadiness({ kind: "vision", config: {} }, [dep("qwen2-5-1-5b", "inference")])).toEqual({ state: "needsDeployment", recommended: MODEL_CATALOG.vision });
     expect(MODEL_CATALOG.vision).toMatchObject({ modelId: "moondream", engine: "ollama", modelType: "inference", deploymentName: "moondream-vision" });

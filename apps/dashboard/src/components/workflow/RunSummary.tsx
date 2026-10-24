@@ -2,7 +2,14 @@ import { formatMs } from "@/lib/workflow/stats";
 import type { NodeKind, NodeRun, Workflow } from "@/lib/workflow/types";
 import { useNow } from "./useNow";
 
-const STAGE_LABELS: Partial<Record<NodeKind, string>> = { speechToText: "STT", llm: "LLM", textToSpeech: "TTS" };
+const STAGE_LABELS: Partial<Record<NodeKind, string>> = {
+  videoInput: "Frames",
+  speechToText: "STT",
+  llm: "LLM",
+  textToSpeech: "TTS",
+  imageGeneration: "Image",
+  vision: "Vision",
+};
 
 interface Props {
   workflow: Workflow;
